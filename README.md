@@ -1,6 +1,19 @@
-# untrust
+<p align="center">
+  <img src="assets/untrust-banner.png" alt="untrust — a TEE deployment auditor" width="880">
+</p>
 
-**A TEE deployment auditor for the trust boundaries that attestation forgets.**
+<h1 align="center">untrust</h1>
+
+<p align="center"><em>A TEE deployment auditor for the trust boundaries that attestation forgets.</em></p>
+
+<p align="center">
+  <a href="https://pypi.org/project/untrust/"><img alt="PyPI" src="https://img.shields.io/pypi/v/untrust?color=3fb950"></a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <img alt="Checks" src="https://img.shields.io/badge/checks-33-8957e5">
+  <img alt="Platforms" src="https://img.shields.io/badge/TEE-Nitro%20%7C%20SEV--SNP%20%7C%20TDX-39c5cf">
+  <a href="https://defcon.org/"><img alt="DEF CON 34" src="https://img.shields.io/badge/DEF%20CON-34-ff5555"></a>
+</p>
 
 Cloud TEEs (AWS Nitro Enclaves, AMD SEV-SNP, Intel TDX) promise that a fully compromised host cannot reach into a hardware-isolated enclave. The cryptographic attestation story is sound. The deployment story is not.
 
@@ -49,27 +62,17 @@ untrust scan --demo
 
 ### Sample output
 
-```
-untrust v1.0.0 — TEE Deployment Audit Report
-Timestamp: 2026-08-24 14:30:22 UTC
-Target: i-0abc123def456789a
+Running `untrust scan --demo` against the built-in simulated deployment:
 
-[FAIL] BOOTSTRAP-01    S3 bucket accepts path traversal keys. 4 of 4 canary writes succeeded.
-[FAIL] BOOTSTRAP-02    No bucket policy exists.
-[FAIL] KMS-01          1 Allow+Decrypt statement(s) bind only to identity PCRs, not to a code measurement.
-[FAIL] IMDS-01         HttpTokens is 'optional' (should be 'required' for IMDSv2-only)
-[FAIL] IAM-01          Instance role has 2 overly permissive statement(s).
-[FAIL] SSH-01          SSH daemon (sshd) is running | EC2 Instance Connect is installed
-[FAIL] NAT-01          No iptables FORWARD rule found blocking 169.254.169.254.
-[FAIL] HOST-01         3 sensitive file(s) are world-readable.
-[FAIL] ENCLAVE-04      Enclave image is unsigned (no PCR8).
-[FAIL] ROLLBACK-01     No S3 Object Lock on the state bucket.
-[FAIL] CLOUDTRAIL-01   No trail records S3 object-level data events for the state bucket.
-[FAIL] AUDIT-01        S3 versioning is Disabled | S3 server access logging is disabled
-... (28 checks total)
+<p align="center">
+  <img src="assets/untrust-demo-scan.png" alt="untrust scan --demo output" width="820">
+</p>
 
-28 of 28 checks failed.
-```
+List every check and its severity with `untrust list-checks`:
+
+<p align="center">
+  <img src="assets/untrust-list-checks.png" alt="untrust list-checks output" width="720">
+</p>
 
 ---
 
