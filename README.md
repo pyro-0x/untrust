@@ -19,7 +19,7 @@ Cloud TEEs (AWS Nitro Enclaves, AMD SEV-SNP, Intel TDX) promise that a fully com
 
 Every TEE workload has to receive *something* from outside: bootstrap state from cloud object storage, environment variables from the host, KMS keys whose policies should but often don't enforce attestation. None of these inputs are protected by the attestation guarantee. All of them have been used in real exploitation.
 
-`untrust` audits the trust boundaries TEE attestation does not cover, and produces a pass/fail report with concrete remediation guidance.
+`untrust` audits the trust boundaries TEE attestation does not cover, and produces a pass/fail report with concrete remediation guidance. It ships checks for two platforms today — **AWS Nitro Enclaves** and **AMD SEV-SNP on GCP Confidential Space** — behind a single `--platform` switch, and one `pip install untrust` includes both.
 
 ---
 
@@ -37,7 +37,7 @@ The talk presenting this research was delivered at **DEF CON 34** (August 2026):
 pip install untrust
 ```
 
-Requires Python 3.10+ and AWS credentials configured (for live scans).
+Requires Python 3.10+. A single install includes **both** the AWS and GCP scanners — no extras. Live scans use your existing AWS credentials (Nitro) or Google Application Default Credentials (Confidential Space); demo mode needs neither.
 
 ---
 
@@ -60,6 +60,26 @@ untrust scan \
 untrust scan --demo
 ```
 
+### GCP Confidential Space (SEV-SNP)
+
+```bash
+# Demo — no GCP credentials needed
+untrust scan --platform sev-snp --demo
+
+# List the SEV-SNP / Confidential Space checks
+untrust list-checks --platform sev-snp
+
+# Live scan against a Confidential Space deployment (uses Application Default Credentials)
+untrust scan --platform sev-snp \
+  --wip-provider projects/PROJECT/locations/global/workloadIdentityPools/POOL/providers/PROVIDER \
+  --gcp-kms-key projects/PROJECT/locations/global/keyRings/RING/cryptoKeys/KEY \
+  --gcs-bucket my-bootstrap-state \
+  --gcp-instance my-cs-vm --gcp-zone us-central1-a \
+  --output report.json
+```
+
+Any single target flag is enough; checks whose inputs are absent report `SKIP`.
+
 ### Sample output
 
 Running `untrust scan --demo` against the built-in simulated deployment:
@@ -77,6 +97,8 @@ List every check and its severity with `untrust list-checks`:
 ---
 
 ## What it audits
+
+### AWS Nitro Enclaves — 33 checks
 
 33 checks across eight categories, each mapped to a real-world exploitation path.
 
@@ -165,6 +187,19 @@ The bootstrap-state trust boundary is backend-agnostic — attestation covers no
 |-------|-----------------|-----------------|
 | **CLOUDTRAIL-01** | Is a trail logging management events (KMS `Decrypt`) and S3 data events for the state bucket? | Live KMS interception and state tampering leave no audit trail |
 
+### GCP Confidential Space (SEV-SNP) — 11 checks
+
+The same thesis on GCP: attestation proves the code, not what you hand it at boot, nor who you let ask for the keys. On Confidential Space a workload proves itself with an attestation token and exchanges it — through Workload Identity Federation (WIF) — for Cloud KMS access. Run `untrust list-checks --platform sev-snp`; full detail lives in [`untrust/platforms/sevsnp/README.md`](untrust/platforms/sevsnp/README.md).
+
+| Check | What it verifies | Failure enables |
+|-------|-----------------|-----------------|
+| **CSPACE-KEYBIND-01** | WIF attribute condition binds key release to a **code measurement** (`dbgstat == disabled-since-boot` **and** a pinned `image_digest`), not just identity | Key release to any workload, or a debug VM |
+| **CSPACE-KMS-01** | Cloud KMS decrypt is federated only through the attested pool (`principalSet://…/workloadIdentityPools/…`), never `allUsers` or a plain service account | Attestation-ungated decrypt |
+| **GCS-BOOT-01 / -02** | Bootstrap bucket is hardened (public-access prevention, uniform access, versioning) **and** rejects injection-shaped object writes | Boot-time RCE via a planted state object |
+| **CSPACE-VM-01** | Instance is a real SEV-SNP Confidential VM with Shielded boot (Secure Boot, vTPM, integrity monitoring) | Isolation not actually in effect |
+| **CSPACE-ATT-01** | A captured attestation token asserts non-debug, a signed image, a production (non-USABLE) image, and AMD SEV hardware | Trust placed in an untrusted runtime state |
+| **CSPACE-META-01 · SA-01 · SAKEY-01 · WIF-02 · IMG-01** | Five **Tier-1 attestation-bypass** paths: VM metadata mutability (`tee-image-reference`), service-account impersonation, long-lived SA keys, weaker sibling WIF providers, and workload image signing | Running attacker code *as* the attested workload, or reaching keys with no attestation at all |
+
 ---
 
 ## What `untrust` deliberately does *not* check (and why)
@@ -213,6 +248,12 @@ untrust scan --demo --json
 # List available checks
 untrust list-checks
 
+# --- GCP Confidential Space (SEV-SNP) ---
+untrust scan --platform sev-snp --demo
+untrust scan --platform sev-snp --wip-provider PROVIDER --gcs-bucket BUCKET \
+  --gcp-instance VM --gcp-zone ZONE --gcp-kms-key KEY
+untrust list-checks --platform sev-snp
+
 # Version
 untrust --version
 ```
@@ -249,10 +290,8 @@ The `--output` and `--json` flags produce structured output suitable for integra
 ## Roadmap
 
 - **v1.0 (DEF CON 34, August 2026):** AWS Nitro Enclaves, 33 checks (S3 + DynamoDB/Secrets Manager/SSM/EFS/RDS state backends), JSON output
-- **v1.1:** SARIF output format for GitHub Advanced Security integration
-- **v2.0:** AMD SEV-SNP attestation policy auditing
-- **v2.1:** Intel TDX bootstrap integrity checks
-- **v3.0:** Azure Confidential Containers, GCP Confidential VMs
+- **v1.1 — shipped:** AMD SEV-SNP on **GCP Confidential Space**, 11 checks including five Tier-1 attestation-bypass paths, behind a `--platform` switch
+- **Next:** SARIF output for GitHub code scanning; Intel TDX bootstrap integrity; Azure Confidential Containers
 - **Future:** Plugin API for vendor-specific TEE platforms
 
 Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -261,7 +300,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
-`untrust` uses the AWS SDK (boto3) and SSM to inspect the target deployment. It combines several families of checks (run `untrust list-checks` for the full set of 33):
+For AWS Nitro, `untrust` uses the AWS SDK (boto3) and SSM to inspect the target deployment; for GCP Confidential Space (`--platform sev-snp`) it uses the Google API client libraries (Compute, IAM, Cloud KMS, Storage) with your Application Default Credentials, and each check separates a pure `analyze_*()` function from a thin live-fetch wrapper. The AWS Nitro platform combines several families of checks (run `untrust list-checks` for the full set of 33):
 
 - **Cloud-API checks** read S3, KMS, EC2, IAM, and CloudTrail configuration directly — e.g. `KMS-01` performs semantic key-policy evaluation (rejecting all-zeros and identity-only PCR conditions), `ROLLBACK-01` reads S3 Object Lock, `S3-02` reads bucket encryption and the TLS-only policy, and `CLOUDTRAIL-01` confirms KMS/S3 activity is actually logged.
 - **Alternative-backend checks** apply the same storage-plane controls to non-S3 state stores when targeted: DynamoDB (`DDB-01`), Secrets Manager (`SECRETS-01`), SSM Parameter Store (`SSM-01`), EFS/EBS (`EFS-01`), and RDS/Aurora (`RDS-01`). Each checks for a customer-managed CMK (so `KMS-01` attestation can gate it), least-privilege/non-public access, anti-rollback, and audit coverage. CMK status is resolved authoritatively via `kms:DescribeKey` (`KeyMetadata.KeyManager`) — a string check cannot distinguish an AWS-managed service key from a customer CMK, since both surface as a resolved key ARN.
