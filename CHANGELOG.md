@@ -5,6 +5,30 @@ All notable changes to `untrust` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-30
+
+Second cloud platform: AMD SEV-SNP on GCP Confidential Space.
+
+### Added
+
+- **SEV-SNP / GCP Confidential Space platform** (11 checks): attestation-bound
+  key release (WIF attribute condition), Cloud KMS federation, bootstrap-bucket
+  hardening plus an active injection probe, Confidential VM config, attestation
+  token claims, and five Tier-1 attestation-bypass checks (metadata mutability,
+  service-account impersonation, service-account keys, sibling WIF providers, and
+  workload image signing).
+- **Platform layer** (`untrust/platforms/`): a registry mapping each platform to
+  its check set and demo; `nitro` resolves to the existing check set unchanged.
+- **Injection-probe engine** (`untrust/probes/`) used by the GCS bootstrap probe.
+- CLI `--platform {nitro,sev-snp}`, GCP target flags, and platform-aware
+  `list-checks`.
+
+### Changed
+
+- The GCP client libraries (`google-api-python-client`, `google-cloud-storage`,
+  `google-auth`) are now core dependencies, so a single `pip install untrust`
+  provides both the AWS and GCP scanners.
+
 ## [1.0.0] - 2026-07-30
 
 First public release.
