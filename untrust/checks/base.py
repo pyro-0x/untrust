@@ -79,6 +79,22 @@ class Target:
     # runtime attestation checks, when a live token can be captured.
     attestation_token: str | None = None
 
+    # --- NVIDIA GPU Confidential Computing (gpu-cc) ---
+    # Path to a captured NVIDIA GPU attestation report (JSON).
+    gpu_attestation_report: str | None = None
+    # Path to the relying party's verifier policy (JSON): pinned RIM measurements,
+    # cert-chain validation, revocation, nonce/expiry.
+    gpu_verifier_policy: str | None = None
+    # CC mode string as reported by `nvidia-smi conf-compute -f`: on|devtools|off.
+    gpu_cc_mode: str | None = None
+    # Path to the key-release / KBS policy (JSON): attest-before-ready,
+    # attestation-bound release, decrypt location.
+    gpu_kbs_policy: str | None = None
+    # Object store holding model weights/data, for the boot-time injection probe.
+    gpu_model_bucket: str | None = None
+    # Path to the CVM/GPU launch config (JSON) for the launch-mutability check.
+    gpu_launch_config: str | None = None
+
 
 class Check:
     """Subclass and implement ``run()`` to add a new audit."""

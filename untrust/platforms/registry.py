@@ -32,6 +32,16 @@ def _sevsnp_demo() -> tuple[Target, list[Finding]]:
     return run_sevsnp_demo()
 
 
+def _gpucc_checks() -> list[type[Check]]:
+    from .gpucc import GPUCC_CHECKS
+    return GPUCC_CHECKS
+
+
+def _gpucc_demo() -> tuple[Target, list[Finding]]:
+    from .gpucc.demo import run_gpucc_demo
+    return run_gpucc_demo()
+
+
 # platform -> (lazy check-list loader, lazy demo loader)
 _ChecksLoader = Callable[[], list[type[Check]]]
 _DemoLoader = Callable[[], tuple[Target, list[Finding]]]
@@ -39,7 +49,8 @@ _DemoLoader = Callable[[], tuple[Target, list[Finding]]]
 _REGISTRY: dict[str, tuple[_ChecksLoader, _DemoLoader]] = {
     Platform.NITRO.value: (_nitro_checks, _nitro_demo),
     Platform.SEV_SNP.value: (_sevsnp_checks, _sevsnp_demo),
-    # Platform.TDX.value: (_tdx_checks, _tdx_demo),  # v2.1
+    Platform.GPU_CC.value: (_gpucc_checks, _gpucc_demo),
+    # Platform.TDX.value: (_tdx_checks, _tdx_demo),  # future
 }
 
 

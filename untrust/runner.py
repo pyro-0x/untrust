@@ -192,6 +192,12 @@ def format_json(findings: list[Finding], target: Target) -> str:
             "gcp_instance": target.gcp_instance,
             "gcp_zone": target.gcp_zone,
             "attestation_token": target.attestation_token,
+            "gpu_attestation_report": target.gpu_attestation_report,
+            "gpu_verifier_policy": target.gpu_verifier_policy,
+            "gpu_cc_mode": target.gpu_cc_mode,
+            "gpu_kbs_policy": target.gpu_kbs_policy,
+            "gpu_model_bucket": target.gpu_model_bucket,
+            "gpu_launch_config": target.gpu_launch_config,
         },
         "summary": {
             "total": len(findings),

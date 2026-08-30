@@ -25,7 +25,7 @@ def cli() -> None:
 @cli.command()
 @click.option(
     "--platform", "platform", default="nitro",
-    type=click.Choice(["nitro", "sev-snp", "tdx"]),
+    type=click.Choice(["nitro", "sev-snp", "gpu-cc", "tdx"]),
     help="TEE platform to audit (default: nitro).",
 )
 # --- AWS Nitro target ---
@@ -65,6 +65,31 @@ def cli() -> None:
     "--attestation-token", type=click.Path(),
     help="[sev-snp] Path to a captured Confidential Space attestation token (JWT).",
 )
+# --- NVIDIA GPU Confidential Computing target ---
+@click.option(
+    "--gpu-attestation-report", type=click.Path(),
+    help="[gpu-cc] Path to a captured NVIDIA GPU attestation report (JSON).",
+)
+@click.option(
+    "--gpu-verifier-policy", type=click.Path(),
+    help="[gpu-cc] Verifier policy JSON: pinned RIM measurements, cert chain, revocation.",
+)
+@click.option(
+    "--gpu-cc-mode",
+    help="[gpu-cc] CC mode (nvidia-smi conf-compute -f): on|devtools|off.",
+)
+@click.option(
+    "--gpu-kbs-policy", type=click.Path(),
+    help="[gpu-cc] Key-release policy JSON: attest-before-ready, decrypt location.",
+)
+@click.option(
+    "--gpu-model-bucket",
+    help="[gpu-cc] Object store holding model weights (injection probe).",
+)
+@click.option(
+    "--gpu-launch-config", type=click.Path(),
+    help="[gpu-cc] Path to the CVM/GPU launch config (JSON) for the launch-mutability check.",
+)
 @click.option("--output", "output_path", type=click.Path(), help="Write JSON report to this path.")
 @click.option("--json", "json_output", is_flag=True, help="Print JSON output to stdout.")
 @click.option(
@@ -97,6 +122,12 @@ def scan(
     gcp_instance: str | None,
     gcp_zone: str | None,
     attestation_token: str | None,
+    gpu_attestation_report: str | None,
+    gpu_verifier_policy: str | None,
+    gpu_cc_mode: str | None,
+    gpu_kbs_policy: str | None,
+    gpu_model_bucket: str | None,
+    gpu_launch_config: str | None,
     output_path: str | None,
     json_output: bool,
     read_only: bool,
@@ -138,6 +169,15 @@ def scan(
             "--target-bucket, --kms-key-id, --instance-id, --dynamodb-table, "
             "--secret-arn, --parameter-path, --efs-id, or --db-instance"
         )
+    elif platform == "gpu-cc":
+        identifiers = [
+            gpu_attestation_report, gpu_verifier_policy, gpu_cc_mode,
+            gpu_kbs_policy, gpu_model_bucket, gpu_launch_config,
+        ]
+        id_hint = (
+            "--gpu-attestation-report, --gpu-verifier-policy, --gpu-cc-mode, "
+            "--gpu-kbs-policy, --gpu-model-bucket, or --gpu-launch-config"
+        )
     else:  # sev-snp (and future platforms)
         identifiers = [wip_provider, gcp_kms_key, gcs_bucket, gcp_instance, attestation_token]
         id_hint = (
@@ -171,6 +211,12 @@ def scan(
         gcp_instance=gcp_instance,
         gcp_zone=gcp_zone,
         attestation_token=attestation_token,
+        gpu_attestation_report=gpu_attestation_report,
+        gpu_verifier_policy=gpu_verifier_policy,
+        gpu_cc_mode=gpu_cc_mode,
+        gpu_kbs_policy=gpu_kbs_policy,
+        gpu_model_bucket=gpu_model_bucket,
+        gpu_launch_config=gpu_launch_config,
     )
 
     if platform == "nitro":
@@ -200,7 +246,7 @@ def scan(
 @cli.command(name="list-checks")
 @click.option(
     "--platform", "platform", default="nitro",
-    type=click.Choice(["nitro", "sev-snp", "tdx"]),
+    type=click.Choice(["nitro", "sev-snp", "gpu-cc", "tdx"]),
     help="TEE platform whose checks to list (default: nitro).",
 )
 def list_checks(platform: str) -> None:

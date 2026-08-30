@@ -7,6 +7,7 @@ from enum import Enum
 class Platform(str, Enum):
     NITRO = "nitro"
     SEV_SNP = "sev-snp"
+    GPU_CC = "gpu-cc"
     TDX = "tdx"
 
     @classmethod
