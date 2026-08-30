@@ -93,7 +93,6 @@ INTRUSIVE_CHECK_IDS: frozenset[str] = frozenset({
     "RESTART-01", "ENCLAVE-01", "ENCLAVE-02", "ENCLAVE-03", "ENCLAVE-04",
 })
 
-
 def selected_checks(read_only: bool = False) -> list[type[Check]]:
     """Return the checks to run. In read-only mode, drop intrusive checks."""
     if not read_only:
@@ -101,14 +100,10 @@ def selected_checks(read_only: bool = False) -> list[type[Check]]:
     return [c for c in ALL_CHECKS if c.check_id not in INTRUSIVE_CHECK_IDS]
 
 
-def run_all(target: Target, read_only: bool = False) -> list[Finding]:
-    """Execute checks against the given target and return findings.
-
-    When ``read_only`` is True, intrusive checks (S3 write probe and host
-    shell execution via SSM) are skipped so the scan stays passive.
-    """
+def run_checks(target: Target, check_classes: list[type[Check]]) -> list[Finding]:
+    """Execute the given checks against a target and return findings."""
     findings: list[Finding] = []
-    for check_cls in selected_checks(read_only):
+    for check_cls in check_classes:
         check = check_cls()
         try:
             finding = check.run(target)
@@ -124,6 +119,15 @@ def run_all(target: Target, read_only: bool = False) -> list[Finding]:
     return findings
 
 
+def run_all(target: Target, read_only: bool = False) -> list[Finding]:
+    """Execute the Nitro check set (backwards-compatible default).
+
+    When ``read_only`` is True, intrusive checks (S3 write probe and host
+    shell execution via SSM) are skipped so the scan stays passive.
+    """
+    return run_checks(target, selected_checks(read_only))
+
+
 def format_console(findings: list[Finding], target: Target) -> str:
     """Format findings for terminal display."""
     from . import __version__
@@ -132,7 +136,14 @@ def format_console(findings: list[Finding], target: Target) -> str:
     lines.append(f"untrust v{__version__} — TEE Deployment Audit Report")
     lines.append(f"Timestamp: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
-    target_desc = target.instance_id or target.bucket or "unknown"
+    target_desc = (
+        target.instance_id
+        or target.bucket
+        or target.wip_provider
+        or target.gcp_project
+        or target.attestation_token
+        or "unknown"
+    )
     lines.append(f"Target: {target_desc}")
     lines.append("")
 
@@ -143,7 +154,7 @@ def format_console(findings: list[Finding], target: Target) -> str:
             Status.SKIP: "\033[33m[SKIP]\033[0m",
             Status.ERROR: "\033[33m[ERR ]\033[0m",
         }.get(f.status, "[????]")
-        lines.append(f"{icon} {f.check_id:<16}{f.summary}")
+        lines.append(f"{icon} {f.check_id:<18}{f.summary}")
 
     lines.append("")
     fail_count = sum(1 for f in findings if f.status == Status.FAIL)
@@ -164,6 +175,7 @@ def format_json(findings: list[Finding], target: Target) -> str:
         "version": __version__,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "target": {
+            "platform": target.platform,
             "bucket": target.bucket,
             "kms_key_id": target.kms_key_id,
             "instance_id": target.instance_id,
@@ -173,6 +185,13 @@ def format_json(findings: list[Finding], target: Target) -> str:
             "parameter_path": target.parameter_path,
             "efs_id": target.efs_id,
             "db_instance": target.db_instance,
+            "gcp_project": target.gcp_project,
+            "wip_provider": target.wip_provider,
+            "gcp_kms_key": target.gcp_kms_key,
+            "gcs_bucket": target.gcs_bucket,
+            "gcp_instance": target.gcp_instance,
+            "gcp_zone": target.gcp_zone,
+            "attestation_token": target.attestation_token,
         },
         "summary": {
             "total": len(findings),
