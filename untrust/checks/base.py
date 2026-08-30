@@ -40,12 +40,17 @@ class Finding:
 class Target:
     """Description of the deployment being audited.
 
-    ``bucket`` is the classic S3 bootstrap-state store, but a TEE can load
-    the untrusted external state it trusts at boot from other backends. The
-    same trust-boundary controls apply to each, so a target may name one or
-    more alternative state stores in addition to (or instead of) an S3
-    bucket. Checks that target a backend skip when its field is unset.
+    The original fields describe an AWS Nitro Enclaves deployment; platform is
+    "nitro" by default so every existing check and caller behaves unchanged.
+    ``bucket`` is the classic S3 bootstrap-state store, but a TEE can load the
+    untrusted external state it trusts at boot from other backends. The same
+    trust-boundary controls apply to each, so a target may name one or more
+    alternative state stores in addition to (or instead of) an S3 bucket;
+    checks that target a backend skip when its field is unset. The ``gcp_*``
+    fields describe an AMD SEV-SNP workload running on GCP Confidential Space
+    and are only read by the sev-snp platform checks.
     """
+    # --- AWS Nitro (default platform) ---
     bucket: str | None = None
     kms_key_id: str | None = None
     instance_id: str | None = None
@@ -56,6 +61,23 @@ class Target:
     parameter_path: str | None = None
     efs_id: str | None = None
     db_instance: str | None = None
+
+    # --- Platform selector ---
+    platform: str = "nitro"  # one of: nitro | sev-snp | tdx
+
+    # --- GCP Confidential Space / SEV-SNP ---
+    gcp_project: str | None = None
+    # Full resource name of the Workload Identity Federation *provider* whose
+    # attribute condition gates attestation-based key release, e.g.
+    # projects/123/locations/global/workloadIdentityPools/POOL/providers/PROV
+    wip_provider: str | None = None
+    gcp_kms_key: str | None = None  # projects/.../cryptoKeys/... to audit IAM on
+    gcs_bucket: str | None = None   # bootstrap-state bucket
+    gcp_instance: str | None = None  # Confidential VM instance name
+    gcp_zone: str | None = None      # zone of the Confidential VM
+    # Path to a sample Confidential Space attestation token (JWT) for the
+    # runtime attestation checks, when a live token can be captured.
+    attestation_token: str | None = None
 
 
 class Check:
