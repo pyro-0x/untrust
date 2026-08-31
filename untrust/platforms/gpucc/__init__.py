@@ -18,10 +18,14 @@ from .cert_chain import GpuCertChainCheck
 from .cvm_binding import GpuCvmBindingCheck
 from .decrypt_location import GpuDecryptLocationCheck
 from .dma_session import GpuDmaSessionCheck
+from .failopen import GpuFailOpenCheck
+from .key_hygiene import GpuKeyHygieneCheck
 from .launch_mutability import GpuLaunchMutabilityCheck
 from .model_bootstrap import GpuModelBootstrapCheck
 from .ready_state import GpuReadyStateCheck
+from .reattest import GpuReattestCheck
 from .rim_measurement import GpuRimPinningCheck
+from .signature_verify import GpuSignatureVerifyCheck
 from .vram_encryption import GpuVramEncryptionCheck
 
 GPUCC_CHECKS: list[type[Check]] = [
@@ -29,6 +33,9 @@ GPUCC_CHECKS: list[type[Check]] = [
     GpuAttestationCheck,  # GPUCC-ATT-01
     GpuRimPinningCheck,  # GPUCC-RIM-01
     GpuCertChainCheck,  # GPUCC-CERT-01
+    GpuSignatureVerifyCheck,  # GPUCC-SIGVERIFY-01
+    GpuReattestCheck,  # GPUCC-REATTEST-01
+    GpuFailOpenCheck,  # GPUCC-FAILOPEN-01
     # B. CC mode & runtime posture
     GpuCcModeCheck,  # GPUCC-MODE-01
     GpuReadyStateCheck,  # GPUCC-READY-01
@@ -42,6 +49,8 @@ GPUCC_CHECKS: list[type[Check]] = [
     GpuLaunchMutabilityCheck,  # GPUCC-VMM-META-01
     # F. Underlying CVM
     GpuCvmBindingCheck,  # GPUCC-CVM-01
+    # G. Key & identity hygiene
+    GpuKeyHygieneCheck,  # GPUCC-KEY-01
 ]
 
 __all__ = [
@@ -57,4 +66,8 @@ __all__ = [
     "GpuDmaSessionCheck",
     "GpuLaunchMutabilityCheck",
     "GpuCvmBindingCheck",
+    "GpuSignatureVerifyCheck",
+    "GpuReattestCheck",
+    "GpuFailOpenCheck",
+    "GpuKeyHygieneCheck",
 ]

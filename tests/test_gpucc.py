@@ -12,9 +12,13 @@ from untrust.platforms.gpucc.cert_chain import analyze_cert_policy
 from untrust.platforms.gpucc.cvm_binding import analyze_cvm_binding
 from untrust.platforms.gpucc.decrypt_location import analyze_decrypt_location
 from untrust.platforms.gpucc.dma_session import analyze_dma_session
+from untrust.platforms.gpucc.failopen import analyze_fail_closed
+from untrust.platforms.gpucc.key_hygiene import analyze_key_hygiene
 from untrust.platforms.gpucc.launch_mutability import analyze_launch_mutability
 from untrust.platforms.gpucc.ready_state import analyze_key_release_policy
+from untrust.platforms.gpucc.reattest import analyze_reattestation
 from untrust.platforms.gpucc.rim_measurement import analyze_rim_pinning
+from untrust.platforms.gpucc.signature_verify import analyze_signature_verification
 from untrust.platforms.gpucc.vram_encryption import analyze_vram_encryption
 
 
@@ -34,15 +38,16 @@ def _good_report() -> dict[str, Any]:
 
 def test_registry_exposes_gpucc() -> None:
     assert "gpu-cc" in supported_platforms()
-    assert len(checks_for("gpu-cc")) == 11
+    assert len(checks_for("gpu-cc")) == 15
 
 
 def test_gpucc_demo_covers_all_checks() -> None:
     target, findings = demo_for("gpu-cc")
     assert target.platform == "gpu-cc"
-    assert len(findings) == 11
+    assert len(findings) == 15
     ids = {f.check_id for f in findings}
     assert "GPUCC-ATT-01" in ids and "GPUCC-VMM-META-01" in ids
+    assert {"GPUCC-SIGVERIFY-01", "GPUCC-REATTEST-01", "GPUCC-FAILOPEN-01", "GPUCC-KEY-01"} <= ids
     # the demo is a vulnerable deployment: every check fails
     assert all(f.status == Status.FAIL for f in findings)
 
@@ -186,3 +191,49 @@ def test_cvm_binding_non_confidential_or_debug_fails() -> None:
     r2 = _good_report()
     r2["cpu_tee"]["debug"] = True
     assert analyze_cvm_binding(r2)["passed"] is False
+
+
+# --- GPUCC-SIGVERIFY-01 / REATTEST-01 / FAILOPEN-01 -------------------------
+
+
+def test_signature_verification() -> None:
+    assert analyze_signature_verification({"verify_signature": True})["passed"] is True
+    assert analyze_signature_verification({"verify_signature": False})["passed"] is False
+    assert analyze_signature_verification({})["passed"] is False
+
+
+def test_reattestation_requires_continuous_and_on_change() -> None:
+    assert analyze_reattestation(
+        {"continuous_attestation": True, "reattest_on_state_change": True}
+    )["passed"] is True
+    assert analyze_reattestation({"continuous_attestation": True})["passed"] is False
+    assert analyze_reattestation({})["passed"] is False
+
+
+def test_fail_closed() -> None:
+    assert analyze_fail_closed({"fail_closed": True})["passed"] is True
+    assert analyze_fail_closed({"fail_closed": False})["passed"] is False
+
+
+# --- GPUCC-KEY-01 -----------------------------------------------------------
+
+
+def test_key_hygiene_good_passes() -> None:
+    v = analyze_key_hygiene(
+        {"dek_source": "kbs", "key_rotation_days": 30,
+         "sa_user_managed_keys": 0, "sa_impersonators": []}
+    )
+    assert v["passed"] is True
+
+
+def test_key_hygiene_env_dek_and_sa_bypass_fail() -> None:
+    v = analyze_key_hygiene({"dek_source": "env", "key_rotation_days": 30})
+    assert v["passed"] is False and v["dek_source"] == "env"
+    v2 = analyze_key_hygiene(
+        {"dek_source": "kbs", "key_rotation_days": 30, "sa_user_managed_keys": 2}
+    )
+    assert v2["passed"] is False
+    v3 = analyze_key_hygiene(
+        {"dek_source": "kbs", "key_rotation_days": None}
+    )
+    assert v3["passed"] is False  # no rotation

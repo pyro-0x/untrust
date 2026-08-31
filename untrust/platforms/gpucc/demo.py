@@ -18,9 +18,13 @@ from .cert_chain import analyze_cert_policy
 from .cvm_binding import analyze_cvm_binding
 from .decrypt_location import analyze_decrypt_location
 from .dma_session import analyze_dma_session
+from .failopen import analyze_fail_closed
+from .key_hygiene import analyze_key_hygiene
 from .launch_mutability import analyze_launch_mutability
 from .ready_state import analyze_key_release_policy
+from .reattest import analyze_reattestation
 from .rim_measurement import analyze_rim_pinning
+from .signature_verify import analyze_signature_verification
 from .vram_encryption import analyze_vram_encryption
 
 # A debug (DevTools) GPU with memory protection off and no confidential CPU VM.
@@ -41,11 +45,16 @@ _DEMO_POLICY: dict[str, Any] = {
     "revocation_check": False,
 }
 
-# Keys released before attestation and decrypted in host RAM.
+# Keys released before attestation, decrypted in host RAM, DEK handed in via env,
+# no rotation, and a workload SA anyone can impersonate.
 _DEMO_KBS: dict[str, Any] = {
     "attest_before_ready": False,
     "attestation_bound": False,
     "decrypt_location": "host",
+    "dek_source": "env",
+    "key_rotation_days": None,
+    "sa_user_managed_keys": 1,
+    "sa_impersonators": ["allAuthenticatedUsers"],
 }
 
 # Launch measurement unpinned and mutable by the untrusted host.
@@ -76,6 +85,10 @@ def run_gpucc_demo() -> tuple[Target, list[Finding]]:
     dma = analyze_dma_session(_DEMO_REPORT)
     launch = analyze_launch_mutability(_DEMO_LAUNCH)
     cvm = analyze_cvm_binding(_DEMO_REPORT)
+    sigv = analyze_signature_verification(_DEMO_POLICY)
+    reatt = analyze_reattestation(_DEMO_POLICY)
+    failopen = analyze_fail_closed(_DEMO_POLICY)
+    keyh = analyze_key_hygiene(_DEMO_KBS)
 
     # Simulate a wide-open model bucket: every injection-shaped canary write lands.
     probe = probe_surface(ObjectStoreSurface(put_fn=lambda name: None)).as_evidence()
@@ -191,6 +204,42 @@ def run_gpucc_demo() -> tuple[Target, list[Finding]]:
             summary="The CPU-side confidential VM is incomplete: " + "; ".join(cvm["issues"]) + ".",
             remediation="Run the GPU inside a verified, non-debug TDX/SEV-SNP CVM.",
             evidence=cvm,
+        ),
+        Finding(
+            check_id="GPUCC-SIGVERIFY-01",
+            title="The attestation report signature is cryptographically verified",
+            status=Status.FAIL,
+            severity=Severity.CRITICAL,
+            summary="Report signature is not verified: " + "; ".join(sigv["issues"]) + ".",
+            remediation="Cryptographically verify the report signature before trusting any claim.",
+            evidence=sigv,
+        ),
+        Finding(
+            check_id="GPUCC-REATTEST-01",
+            title="Attestation is continuous, not one-shot (post-attest drift is caught)",
+            status=Status.FAIL,
+            severity=Severity.HIGH,
+            summary="Attestation is not continuous: " + "; ".join(reatt["issues"]) + ".",
+            remediation="Re-attest periodically and on GPU state change.",
+            evidence=reatt,
+        ),
+        Finding(
+            check_id="GPUCC-FAILOPEN-01",
+            title="The verifier fails closed when attestation can't be checked",
+            status=Status.FAIL,
+            severity=Severity.HIGH,
+            summary="The verifier fails open: " + "; ".join(failopen["issues"]) + ".",
+            remediation="Fail closed: deny key/data release on any attestation error or outage.",
+            evidence=failopen,
+        ),
+        Finding(
+            check_id="GPUCC-KEY-01",
+            title="Model/data key and workload identity are not an attestation bypass",
+            status=Status.FAIL,
+            severity=Severity.CRITICAL,
+            summary="The key/identity is an attestation bypass: " + "; ".join(keyh["issues"]) + ".",
+            remediation="KBS-release + rotate the DEK; drop SA keys; scope impersonation.",
+            evidence=keyh,
         ),
     ]
 
