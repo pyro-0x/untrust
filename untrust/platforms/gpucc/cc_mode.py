@@ -56,6 +56,23 @@ class GpuCcModeCheck(Check):
                 severity=self.severity,
                 summary="No --gpu-cc-mode specified; skipping check.",
             )
+        # Dedup with GPUCC-ATT-01: when a signed attestation report is present,
+        # ATT-01 already asserts CC-On from signed evidence. The `--gpu-cc-mode`
+        # string is an unauthenticated `nvidia-smi` read, so re-checking CC-On
+        # from it would double-count the same fact at a weaker assurance. This
+        # check therefore covers only the live-only (no-report) path.
+        if target.gpu_attestation_report:
+            return Finding(
+                check_id=self.check_id,
+                title=self.title,
+                status=Status.SKIP,
+                severity=self.severity,
+                summary=(
+                    "CC mode is asserted from the signed attestation report "
+                    "(GPUCC-ATT-01); skipping the unauthenticated live-mode "
+                    "re-check to avoid double-counting."
+                ),
+            )
         v = analyze_cc_mode(target.gpu_cc_mode)
         if not v["passed"]:
             return Finding(

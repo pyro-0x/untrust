@@ -19,6 +19,8 @@ from .cvm_binding import analyze_cvm_binding
 from .decrypt_location import analyze_decrypt_location
 from .dma_session import analyze_dma_session
 from .failopen import analyze_fail_closed
+from .gpu_cvm_bind import analyze_gpu_cvm_binding
+from .input_safety import analyze_model_input
 from .key_hygiene import analyze_key_hygiene
 from .launch_mutability import analyze_launch_mutability
 from .ready_state import analyze_key_release_policy
@@ -31,10 +33,11 @@ from .vram_encryption import analyze_vram_encryption
 _DEMO_REPORT: dict[str, Any] = {
     "cc_mode": "devtools",
     "gpu": {"model": "H100", "uuid": "GPU-00000000", "debug": False},
-    "measurements": {"vbios": "sha384:aa", "gsp_firmware": "sha384:bb", "driver": "sha384:cc"},
+    "measurements": {"driver": "sha384:cc", "vbios": "sha384:aa"},
     "signature": {"present": True, "verified": True},
     "memory": {"vram_encryption": False, "pcie_encryption": False, "spdm_session": False},
     "cpu_tee": {"type": "none", "verified": False, "debug": True, "secure_boot": False},
+    # No `binding` block: the GPU and CVM attestations are unbound.
 }
 
 # A verifier that trusts a signed report but pins nothing and skips the cert chain.
@@ -46,7 +49,7 @@ _DEMO_POLICY: dict[str, Any] = {
 }
 
 # Keys released before attestation, decrypted in host RAM, DEK handed in via env,
-# no rotation, and a workload SA anyone can impersonate.
+# no rotation, a workload SA anyone can impersonate, and weights unpickled as code.
 _DEMO_KBS: dict[str, Any] = {
     "attest_before_ready": False,
     "attestation_bound": False,
@@ -55,6 +58,11 @@ _DEMO_KBS: dict[str, Any] = {
     "key_rotation_days": None,
     "sa_user_managed_keys": 1,
     "sa_impersonators": ["allAuthenticatedUsers"],
+    "model_input": {
+        "loader": "pickle",
+        "signed_manifest": False,
+        "verify_digests_before_load": False,
+    },
 }
 
 # Launch measurement unpinned and mutable by the untrusted host.
@@ -85,10 +93,16 @@ def run_gpucc_demo() -> tuple[Target, list[Finding]]:
     dma = analyze_dma_session(_DEMO_REPORT)
     launch = analyze_launch_mutability(_DEMO_LAUNCH)
     cvm = analyze_cvm_binding(_DEMO_REPORT)
+    bind = analyze_gpu_cvm_binding(_DEMO_REPORT)
     sigv = analyze_signature_verification(_DEMO_POLICY)
     reatt = analyze_reattestation(_DEMO_POLICY)
     failopen = analyze_fail_closed(_DEMO_POLICY)
     keyh = analyze_key_hygiene(_DEMO_KBS)
+    modelinput = analyze_model_input(_DEMO_KBS)
+
+    # NOTE: this catalog shows every check's failure mode, so MODE-01 appears as a
+    # FAIL here. In a real file-based scan that also passes an attestation report,
+    # MODE-01 SKIPs (CC-On is already asserted from the signed report by ATT-01).
 
     # Simulate a wide-open model bucket: every injection-shaped canary write lands.
     probe = probe_surface(ObjectStoreSurface(put_fn=lambda name: None)).as_evidence()
@@ -106,12 +120,13 @@ def run_gpucc_demo() -> tuple[Target, list[Finding]]:
         ),
         Finding(
             check_id="GPUCC-RIM-01",
-            title="Verification pins RIM golden measurements (VBIOS/firmware/driver)",
+            title="Verification pins RIM golden measurements (driver + VBIOS)",
             status=Status.FAIL,
             severity=Severity.HIGH,
             summary="Verification does not pin the golden RIM measurements: "
             + "; ".join(rim["issues"]) + ".",
-            remediation="Pin VBIOS/GSP-firmware/driver golden measurements in the verifier policy.",
+            remediation="Pin the driver + VBIOS golden measurements (and their values) "
+            "in the verifier policy.",
             evidence=rim,
         ),
         Finding(
@@ -160,6 +175,17 @@ def run_gpucc_demo() -> tuple[Target, list[Finding]]:
             evidence=probe,
         ),
         Finding(
+            check_id="GPUCC-INPUT-01",
+            title="Model weights are loaded safely (not deserialized as code)",
+            status=Status.FAIL,
+            severity=Severity.CRITICAL,
+            summary="Model weights are not loaded safely: "
+            + "; ".join(modelinput["issues"]) + ".",
+            remediation="Load weights via safetensors / torch.load(weights_only=True); "
+            "verify a signed, digest-pinned manifest before load.",
+            evidence=modelinput,
+        ),
+        Finding(
             check_id="GPUCC-DECRYPT-01",
             title="Model/data decryption occurs inside the TEE, not untrusted host RAM",
             status=Status.FAIL,
@@ -198,12 +224,24 @@ def run_gpucc_demo() -> tuple[Target, list[Finding]]:
         ),
         Finding(
             check_id="GPUCC-CVM-01",
-            title="GPU is attached to a verified Confidential VM (TDX/SEV-SNP)",
+            title="GPU is attached to a verified Confidential VM (real TDX/SEV-SNP quote)",
             status=Status.FAIL,
             severity=Severity.HIGH,
             summary="The CPU-side confidential VM is incomplete: " + "; ".join(cvm["issues"]) + ".",
-            remediation="Run the GPU inside a verified, non-debug TDX/SEV-SNP CVM.",
+            remediation="Run the GPU inside a verified, non-debug TDX/SEV-SNP CVM with a "
+            "real vendor-signed quote.",
             evidence=cvm,
+        ),
+        Finding(
+            check_id="GPUCC-BIND-01",
+            title="The GPU attestation is cryptographically bound to the CVM",
+            status=Status.FAIL,
+            severity=Severity.CRITICAL,
+            summary="The GPU and CVM attestations are not bound: "
+            + "; ".join(bind["issues"]) + ".",
+            remediation="Bind the GPU report to the CVM measurement and verify both together; "
+            "an unbound GPU report is relayable onto any CVM.",
+            evidence=bind,
         ),
         Finding(
             check_id="GPUCC-SIGVERIFY-01",
@@ -242,5 +280,11 @@ def run_gpucc_demo() -> tuple[Target, list[Finding]]:
             evidence=keyh,
         ),
     ]
+
+    # Stamp each finding with its evidence tier (mirrors what the runner does for
+    # a live scan) so the demo output carries the same honesty labels.
+    from . import ASSURANCE_BY_ID
+    for f in findings:
+        f.assurance = ASSURANCE_BY_ID.get(f.check_id)
 
     return target, findings

@@ -254,12 +254,29 @@ def list_checks(platform: str) -> None:
     from .platforms import checks_for
 
     check_classes = checks_for(platform)
+    # Show the boundary/assurance columns only when the platform classifies them.
+    tagged = any(c.boundary or c.assurance for c in check_classes)
     click.echo(f"Platform: {platform}\n")
-    click.echo(f"{'CHECK':<18}{'SEVERITY':<12}TITLE")
-    click.echo(f"{'─' * 17} {'─' * 11} {'─' * 40}")
-    for check_cls in check_classes:
-        check = check_cls()
-        click.echo(f"{check.check_id:<18}{check.severity.value:<12}{check.title}")
+    if tagged:
+        click.echo(f"{'CHECK':<19}{'SEVERITY':<10}{'BOUNDARY':<13}{'ASSURANCE':<19}TITLE")
+        click.echo(f"{'─' * 18} {'─' * 9} {'─' * 12} {'─' * 18} {'─' * 30}")
+        for check_cls in check_classes:
+            c = check_cls()
+            boundary = c.boundary.value if c.boundary else "-"
+            assurance = c.assurance.value if c.assurance else "-"
+            click.echo(
+                f"{c.check_id:<19}{c.severity.value:<10}{boundary:<13}{assurance:<19}{c.title}"
+            )
+        click.echo(
+            "\nassurance: report-derived (trust gated on GPUCC-SIGVERIFY-01) · "
+            "probed (actively tested) · operator-declared (a policy says so)."
+        )
+    else:
+        click.echo(f"{'CHECK':<18}{'SEVERITY':<12}TITLE")
+        click.echo(f"{'─' * 17} {'─' * 11} {'─' * 40}")
+        for check_cls in check_classes:
+            check = check_cls()
+            click.echo(f"{check.check_id:<18}{check.severity.value:<12}{check.title}")
     click.echo(f"\n{len(check_classes)} checks available.")
 
 

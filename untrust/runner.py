@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .checks.audit_log import AuditLogCheck
-from .checks.base import Check, Finding, Status, Target
+from .checks.base import Assurance, Check, Finding, Status, Target
 from .checks.bootstrap_input import BootstrapInputCheck
 from .checks.bucket_policy import BucketPolicyCheck
 from .checks.cloudtrail_audit import CloudTrailAuditCheck
@@ -115,7 +115,27 @@ def run_checks(target: Target, check_classes: list[type[Check]]) -> list[Finding
                 severity=check.severity,
                 summary=f"Check raised an exception: {e}",
             )
+        # Stamp the check's evidence tier unless the finding set one itself.
+        if finding.assurance is None:
+            finding.assurance = check.assurance
         findings.append(finding)
+
+    # Second pass: a REPORT_DERIVED PASS is only as trustworthy as the report's
+    # signature verification. If a check it depends on (e.g. the signature-verify
+    # check) did not pass, flag the verdict as reading from an unverified report.
+    passed_ids = {f.check_id for f in findings if f.status == Status.PASS}
+    for check_cls, finding in zip(check_classes, findings, strict=True):
+        deps = getattr(check_cls, "assurance_depends_on", ())
+        if (
+            deps
+            and finding.status == Status.PASS
+            and finding.assurance == Assurance.REPORT_DERIVED
+        ):
+            missing = [d for d in deps if d not in passed_ids]
+            if missing:
+                finding.assurance_note = (
+                    "report signature not verified (" + ", ".join(missing) + " not passed)"
+                )
     return findings
 
 
@@ -154,7 +174,9 @@ def format_console(findings: list[Finding], target: Target) -> str:
             Status.SKIP: "\033[33m[SKIP]\033[0m",
             Status.ERROR: "\033[33m[ERR ]\033[0m",
         }.get(f.status, "[????]")
-        lines.append(f"{icon} {f.check_id:<18}{f.summary}")
+        tag = f"  \033[2m[{f.assurance.value}]\033[0m" if f.assurance else ""
+        note = f"  \033[33m⚠ {f.assurance_note}\033[0m" if f.assurance_note else ""
+        lines.append(f"{icon} {f.check_id:<18}{f.summary}{tag}{note}")
 
     lines.append("")
     fail_count = sum(1 for f in findings if f.status == Status.FAIL)
@@ -163,6 +185,34 @@ def format_console(findings: list[Finding], target: Target) -> str:
         lines.append(f"\033[31m{fail_count} of {total} checks failed.\033[0m")
     else:
         lines.append(f"\033[32mAll {total} checks passed.\033[0m")
+
+    # Reframe PASS results by how much each verdict can actually be trusted, so a
+    # high pass-count doesn't read as stronger assurance than the evidence supports.
+    # A report-derived PASS whose signature was never verified counts as unverified.
+    passed = [f for f in findings if f.status == Status.PASS]
+    if any(f.assurance for f in passed):
+        verified = sum(
+            1 for f in passed
+            if f.assurance == Assurance.PROBED
+            or (f.assurance == Assurance.REPORT_DERIVED and not f.assurance_note)
+        )
+        unverified = sum(
+            1 for f in passed
+            if f.assurance == Assurance.REPORT_DERIVED and f.assurance_note
+        )
+        declared = sum(1 for f in passed if f.assurance == Assurance.DECLARED)
+        parts = []
+        if verified:
+            parts.append(f"{verified} verified")
+        if unverified:
+            parts.append(f"{unverified} unverified-report")
+        if declared:
+            parts.append(f"{declared} self-reported")
+        lines.append(
+            f"\033[2mOf the passes: {', '.join(parts)} "
+            f"(self-reported = a policy says so; unverified-report = report read "
+            f"but its signature unchecked).\033[0m"
+        )
 
     return "\n".join(lines)
 
@@ -212,6 +262,8 @@ def format_json(findings: list[Finding], target: Target) -> str:
                 "title": f.title,
                 "status": f.status.value,
                 "severity": f.severity.value,
+                "assurance": f.assurance.value if f.assurance else None,
+                "assurance_note": f.assurance_note,
                 "summary": f.summary,
                 "remediation": f.remediation,
                 "evidence": f.evidence,
