@@ -15,6 +15,7 @@ from ...checks.base import Assurance, Boundary, Check
 from .attestation import GpuAttestationCheck
 from .cc_mode import GpuCcModeCheck
 from .cert_chain import GpuCertChainCheck
+from .cuda_execution import GpuCudaExecutionCheck
 from .cvm_binding import GpuCvmBindingCheck
 from .decrypt_location import GpuDecryptLocationCheck
 from .dma_session import GpuDmaSessionCheck
@@ -41,6 +42,7 @@ GPUCC_CHECKS: list[type[Check]] = [
     # B. CC mode & runtime posture
     GpuCcModeCheck,  # GPUCC-MODE-01
     GpuReadyStateCheck,  # GPUCC-READY-01
+    GpuCudaExecutionCheck,  # GPUCC-CUDA-01
     # C. Inputs / boot-time state
     GpuModelBootstrapCheck,  # GPUCC-MODEL-01
     GpuModelInputCheck,  # GPUCC-INPUT-01
@@ -79,6 +81,7 @@ ASSURANCE_BY_ID: dict[str, Assurance] = {
     "GPUCC-FAILOPEN-01": Assurance.DECLARED,
     "GPUCC-MODE-01": Assurance.DECLARED,
     "GPUCC-READY-01": Assurance.DECLARED,
+    "GPUCC-CUDA-01": Assurance.REPORT_DERIVED,
     "GPUCC-INPUT-01": Assurance.DECLARED,
     "GPUCC-DECRYPT-01": Assurance.DECLARED,
     "GPUCC-VMM-META-01": Assurance.DECLARED,
@@ -94,6 +97,7 @@ ASSURANCE_DEPENDS_ON: dict[str, tuple[str, ...]] = {
     "GPUCC-CVM-01": _SIG,
     "GPUCC-BIND-01": _SIG,
     "GPUCC-RIM-01": _SIG,
+    "GPUCC-CUDA-01": _SIG,
 }
 
 # Which trust boundary each check audits (the untrust/DEF CON thesis). Surfaced in
@@ -107,6 +111,7 @@ BOUNDARY_BY_ID: dict[str, Boundary] = {
     "GPUCC-FAILOPEN-01": Boundary.ATTESTATION,
     "GPUCC-MODE-01": Boundary.ATTESTATION,
     "GPUCC-READY-01": Boundary.ATTESTATION,
+    "GPUCC-CUDA-01": Boundary.ATTESTATION,
     "GPUCC-MODEL-01": Boundary.INPUTS,
     "GPUCC-INPUT-01": Boundary.INPUTS,
     "GPUCC-DECRYPT-01": Boundary.INPUTS,
@@ -133,6 +138,7 @@ __all__ = [
     "GpuCertChainCheck",
     "GpuCcModeCheck",
     "GpuReadyStateCheck",
+    "GpuCudaExecutionCheck",
     "GpuModelBootstrapCheck",
     "GpuModelInputCheck",
     "GpuDecryptLocationCheck",

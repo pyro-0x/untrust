@@ -15,6 +15,7 @@ from ...probes import ObjectStoreSurface, probe_surface
 from .attestation import analyze_attestation_report
 from .cc_mode import analyze_cc_mode
 from .cert_chain import analyze_cert_policy
+from .cuda_execution import analyze_cuda_execution
 from .cvm_binding import analyze_cvm_binding
 from .decrypt_location import analyze_decrypt_location
 from .dma_session import analyze_dma_session
@@ -35,6 +36,15 @@ _DEMO_REPORT: dict[str, Any] = {
     "gpu": {"model": "H100", "uuid": "GPU-00000000", "debug": False},
     "measurements": {"driver": "sha384:cc", "vbios": "sha384:aa"},
     "signature": {"present": True, "verified": True},
+    "cuda_execution": {
+        "schema": "untrust.gpucc.cuda-execution-receipt/v1",
+        "executed": True,
+        "challenge": 7,
+        "response": 7,
+        "gpu_uuid": "GPU-00000000",
+        "ptx_sha256": "c" * 64,
+        "attestation_receipt_sha256": None,
+    },
     "memory": {"vram_encryption": False, "pcie_encryption": False, "spdm_session": False},
     "cpu_tee": {"type": "none", "verified": False, "debug": True, "secure_boot": False},
     # No `binding` block: the GPU and CVM attestations are unbound.
@@ -99,6 +109,7 @@ def run_gpucc_demo() -> tuple[Target, list[Finding]]:
     failopen = analyze_fail_closed(_DEMO_POLICY)
     keyh = analyze_key_hygiene(_DEMO_KBS)
     modelinput = analyze_model_input(_DEMO_KBS)
+    cuda = analyze_cuda_execution(_DEMO_REPORT)
 
     # NOTE: this catalog shows every check's failure mode, so MODE-01 appears as a
     # FAIL here. In a real file-based scan that also passes an attestation report,
@@ -158,6 +169,17 @@ def run_gpucc_demo() -> tuple[Target, list[Finding]]:
             + "; ".join(ready["issues"]) + ".",
             remediation="Verify attestation before ready-state ON; bind key release to it.",
             evidence=ready,
+        ),
+        Finding(
+            check_id="GPUCC-CUDA-01",
+            title="A CUDA kernel executes only after successful GPU attestation",
+            status=Status.FAIL,
+            severity=Severity.HIGH,
+            summary="CUDA execution is not bound to successful GPU attestation: "
+            + "; ".join(cuda["issues"])
+            + ".",
+            remediation="Retain and link nvattest and CUDA receipts; execute only after PASS.",
+            evidence=cuda,
         ),
         Finding(
             check_id="GPUCC-MODEL-01",

@@ -167,6 +167,9 @@ def format_console(findings: list[Finding], target: Target) -> str:
     lines.append(f"Target: {target_desc}")
     lines.append("")
 
+    # Size the ID column to the longest ID so a long one (GPUCC-SIGVERIFY-01) never
+    # runs into its summary.
+    id_width = max((len(f.check_id) for f in findings), default=0) + 1
     for f in findings:
         icon = {
             Status.PASS: "\033[32m[PASS]\033[0m",
@@ -176,7 +179,7 @@ def format_console(findings: list[Finding], target: Target) -> str:
         }.get(f.status, "[????]")
         tag = f"  \033[2m[{f.assurance.value}]\033[0m" if f.assurance else ""
         note = f"  \033[33m⚠ {f.assurance_note}\033[0m" if f.assurance_note else ""
-        lines.append(f"{icon} {f.check_id:<18}{f.summary}{tag}{note}")
+        lines.append(f"{icon} {f.check_id:<{id_width}}{f.summary}{tag}{note}")
 
     lines.append("")
     fail_count = sum(1 for f in findings if f.status == Status.FAIL)

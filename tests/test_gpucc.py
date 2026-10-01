@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
 from typing import Any
 
-from untrust.checks.base import Assurance, Boundary, Status, Target
+from untrust.checks.base import Assurance, Boundary, Finding, Severity, Status, Target
 from untrust.platforms import checks_for, demo_for, supported_platforms
 from untrust.platforms.gpucc import ASSURANCE_BY_ID, BOUNDARY_BY_ID
 from untrust.platforms.gpucc.attestation import GpuAttestationCheck, analyze_attestation_report
 from untrust.platforms.gpucc.cc_mode import GpuCcModeCheck, analyze_cc_mode
 from untrust.platforms.gpucc.cert_chain import analyze_cert_policy
+from untrust.platforms.gpucc.cuda_execution import (
+    GpuCudaExecutionCheck,
+    analyze_cuda_execution,
+)
 from untrust.platforms.gpucc.cvm_binding import analyze_cvm_binding
 from untrust.platforms.gpucc.decrypt_location import analyze_decrypt_location
 from untrust.platforms.gpucc.dma_session import analyze_dma_session
@@ -24,8 +29,12 @@ from untrust.platforms.gpucc.launch_mutability import analyze_launch_mutability
 from untrust.platforms.gpucc.ready_state import analyze_key_release_policy
 from untrust.platforms.gpucc.reattest import analyze_reattestation
 from untrust.platforms.gpucc.rim_measurement import GpuRimPinningCheck, analyze_rim_pinning
-from untrust.platforms.gpucc.signature_verify import analyze_signature_verification
+from untrust.platforms.gpucc.signature_verify import (
+    GpuSignatureVerifyCheck,
+    analyze_signature_verification,
+)
 from untrust.platforms.gpucc.vram_encryption import analyze_vram_encryption
+from untrust.runner import format_console
 
 
 def _good_report() -> dict[str, Any]:
@@ -34,6 +43,25 @@ def _good_report() -> dict[str, Any]:
         "gpu": {"model": "H100", "uuid": "GPU-1", "debug": False},
         "measurements": {"driver": "610.57.04", "vbios": "96.00.d9.00.01"},
         "signature": {"present": True, "verified": True},
+        "verification": {
+            "tool": "nvattest", "verifier": "local", "verified": True,
+            "result_code": 0, "nonce": "a" * 64, "claim_count": 1,
+            "detached_eat_present": True,
+            "raw_result_sha256": "b" * 64,
+        },
+        "cuda_execution": {
+            "schema": "untrust.gpucc.cuda-execution-receipt/v1",
+            "executed": True, "challenge": 7, "response": 7,
+            "gpu_uuid": "GPU-1", "ptx_sha256": "c" * 64,
+            "attestation_receipt_sha256": "d" * 64,
+        },
+        "runtime_attestation": {
+            "schema": "untrust.gpucc.verification-receipt/v1",
+            "tool": "nvattest", "verified": True, "result_code": 0,
+            "nonce": "e" * 64, "claim_count": 1,
+            "detached_eat_present": True,
+            "raw_result_sha256": "f" * 64,
+        },
         "memory": {"vram_encryption": True, "pcie_encryption": True, "spdm_session": True},
         "cpu_tee": {
             "type": "tdx", "debug": False, "secure_boot": True,
@@ -58,13 +86,13 @@ def _write(d: str, name: str, obj: dict[str, Any]) -> str:
 
 def test_registry_exposes_gpucc() -> None:
     assert "gpu-cc" in supported_platforms()
-    assert len(checks_for("gpu-cc")) == 17
+    assert len(checks_for("gpu-cc")) == 18
 
 
 def test_gpucc_demo_covers_all_checks() -> None:
     target, findings = demo_for("gpu-cc")
     assert target.platform == "gpu-cc"
-    assert len(findings) == 17
+    assert len(findings) == 18
     ids = {f.check_id for f in findings}
     assert {"GPUCC-ATT-01", "GPUCC-VMM-META-01", "GPUCC-INPUT-01", "GPUCC-BIND-01"} <= ids
     assert all(f.status == Status.FAIL for f in findings)  # vulnerable deployment
@@ -191,11 +219,185 @@ def test_cert_chain_validated_passes_else_fails() -> None:
     assert analyze_cert_policy({"cert_chain_to_nvidia_root": False})["passed"] is False
 
 
+def test_signature_verification_requires_valid_live_receipt_when_report_supplied() -> None:
+    policy = {"verify_signature": True}
+    assert analyze_signature_verification(policy)["passed"] is True
+    verified = analyze_signature_verification(
+        policy,
+        _good_report(),
+        raw_result_digest_matches=True,
+        raw_result_valid=True,
+        receipt_matches_raw=True,
+        command_nonce_matches=True,
+    )
+    assert verified["passed"] is True and verified["receipt_valid"] is True
+
+    report = _good_report()
+    report["verification"]["result_code"] = 7
+    assert analyze_signature_verification(
+        policy,
+        report,
+        raw_result_digest_matches=True,
+        raw_result_valid=True,
+        receipt_matches_raw=False,
+    )["passed"] is False
+
+
+def test_signature_verification_rejects_declared_only_capture() -> None:
+    report = _good_report()
+    report.pop("verification")
+    assert analyze_signature_verification(
+        {"verify_signature": True},
+        report,
+        raw_result_digest_matches=True,
+        raw_result_valid=True,
+        receipt_matches_raw=True,
+        command_nonce_matches=True,
+    )["passed"] is False
+
+
+def test_signature_verification_rejects_receipt_nonce_not_from_the_command() -> None:
+    assert analyze_signature_verification(
+        {"verify_signature": True},
+        _good_report(),
+        raw_result_digest_matches=True,
+        raw_result_valid=True,
+        receipt_matches_raw=True,
+        command_nonce_matches=False,
+    )["passed"] is False
+
+
+def _write_boot_evidence(directory: str, command_nonce: str) -> str:
+    """A report beside a retained nvattest result run with ``command_nonce``."""
+    raw = (json.dumps({
+        "command": ["nvattest", "attest", "--nonce", command_nonce],
+        "stdout_payload": {"result_code": 0, "claims": [{}], "detached_eat": "eat"},
+    }) + "\n").encode()
+    with open(os.path.join(directory, "verification.json"), "wb") as handle:
+        handle.write(raw)
+    report = _good_report()
+    report["verification"]["raw_result_sha256"] = hashlib.sha256(raw).hexdigest()
+    return _write(directory, "report.json", report)
+
+
+def test_signature_check_binds_receipt_to_the_nvattest_invocation() -> None:
+    policy = _write(tempfile.mkdtemp(), "policy.json", {"verify_signature": True})
+    fresh = _write_boot_evidence(tempfile.mkdtemp(), _good_report()["verification"]["nonce"])
+    finding = GpuSignatureVerifyCheck().run(
+        Target(platform="gpu-cc", gpu_verifier_policy=policy, gpu_attestation_report=fresh))
+    assert finding.status == Status.PASS and finding.assurance is Assurance.REPORT_DERIVED
+
+    # An old passing nvattest result replayed under a new receipt nonce.
+    replayed = _write_boot_evidence(tempfile.mkdtemp(), "9" * 64)
+    finding = GpuSignatureVerifyCheck().run(
+        Target(platform="gpu-cc", gpu_verifier_policy=policy, gpu_attestation_report=replayed))
+    assert finding.status == Status.FAIL
+    assert finding.evidence["command_nonce_matches"] is False
+
+
+def test_console_report_never_runs_a_long_check_id_into_its_summary() -> None:
+    findings = [
+        Finding(check_id=check_id, title="t", status=Status.PASS,
+                severity=Severity.HIGH, summary="Summary.")
+        for check_id in ("GPUCC-ATT-01", "GPUCC-SIGVERIFY-01")
+    ]
+    text = format_console(findings, Target(platform="gpu-cc"))
+    assert "GPUCC-SIGVERIFY-01 Summary." in text
+    assert "GPUCC-ATT-01       Summary." in text
+
+
 def test_ready_state_requires_attest_before_and_bound() -> None:
     assert analyze_key_release_policy(
         {"attest_before_ready": True, "attestation_bound": True})["passed"] is True
     assert analyze_key_release_policy(
         {"attest_before_ready": False, "attestation_bound": True})["passed"] is False
+
+
+# --- GPUCC-CUDA-01 ----------------------------------------------------------
+
+
+def test_cuda_execution_requires_ordered_receipt_chain() -> None:
+    result = analyze_cuda_execution(
+        _good_report(),
+        attestation_receipt_digest_matches=True,
+        raw_result_digest_matches=True,
+        raw_result_valid=True,
+        receipt_matches_raw=True,
+        command_nonce_matches=True,
+    )
+    assert result["passed"] is True
+
+    report = _good_report()
+    report["cuda_execution"]["response"] = 8
+    assert analyze_cuda_execution(
+        report,
+        attestation_receipt_digest_matches=True,
+        raw_result_digest_matches=True,
+        raw_result_valid=True,
+        receipt_matches_raw=True,
+        command_nonce_matches=True,
+    )["passed"] is False
+
+
+def test_cuda_execution_rejects_wrong_gpu_or_unlinked_attestation() -> None:
+    report = _good_report()
+    report["cuda_execution"]["gpu_uuid"] = "GPU-2"
+    assert analyze_cuda_execution(
+        report,
+        attestation_receipt_digest_matches=True,
+        raw_result_digest_matches=True,
+        raw_result_valid=True,
+        receipt_matches_raw=True,
+        command_nonce_matches=True,
+    )["passed"] is False
+
+    report = _good_report()
+    report["cuda_execution"]["attestation_receipt_sha256"] = None
+    assert analyze_cuda_execution(
+        report,
+        attestation_receipt_digest_matches=False,
+        raw_result_digest_matches=True,
+        raw_result_valid=True,
+        receipt_matches_raw=True,
+        command_nonce_matches=True,
+    )["passed"] is False
+
+
+def test_cuda_execution_check_recomputes_both_digests() -> None:
+    directory = tempfile.mkdtemp()
+    runtime_raw_value = {
+        "command": ["nvattest", "attest", "--nonce", "e" * 64],
+        "stdout_payload": {
+            "result_code": 0,
+            "claims": [{}],
+            "detached_eat": [["JWT", "overall"], {"GPU-0": "device"}],
+        },
+    }
+    runtime_raw = (json.dumps(runtime_raw_value) + "\n").encode()
+    raw_path = os.path.join(directory, "runtime-verification.json")
+    with open(raw_path, "wb") as handle:
+        handle.write(runtime_raw)
+
+    runtime_receipt = _good_report()["runtime_attestation"]
+    runtime_receipt["raw_result_sha256"] = hashlib.sha256(runtime_raw).hexdigest()
+    receipt_path = _write(directory, "runtime-attestation.json", runtime_receipt)
+    with open(receipt_path, "rb") as handle:
+        receipt_digest = hashlib.sha256(handle.read()).hexdigest()
+
+    report = _good_report()
+    report["cuda_execution"]["attestation_receipt_sha256"] = receipt_digest
+    report_path = _write(directory, "report.json", report)
+    finding = GpuCudaExecutionCheck().run(
+        Target(platform="gpu-cc", gpu_attestation_report=report_path)
+    )
+    assert finding.status == Status.PASS
+
+    runtime_receipt["verified"] = False
+    _write(directory, "runtime-attestation.json", runtime_receipt)
+    finding = GpuCudaExecutionCheck().run(
+        Target(platform="gpu-cc", gpu_attestation_report=report_path)
+    )
+    assert finding.status == Status.FAIL
 
 
 def test_decrypt_location_tee_vs_host() -> None:
@@ -362,7 +564,7 @@ def test_assurance_tiers_are_honest() -> None:
     assert ASSURANCE_BY_ID["GPUCC-MODEL-01"] is Assurance.PROBED
     assert ASSURANCE_BY_ID["GPUCC-SIGVERIFY-01"] is Assurance.DECLARED
     tiers = list(ASSURANCE_BY_ID.values())
-    assert tiers.count(Assurance.REPORT_DERIVED) == 5
+    assert tiers.count(Assurance.REPORT_DERIVED) == 6
     assert tiers.count(Assurance.PROBED) == 1
     assert tiers.count(Assurance.DECLARED) == 11
     assert set(BOUNDARY_BY_ID.values()) == {
@@ -384,7 +586,19 @@ def test_report_derived_pass_flagged_unverified_without_sigverify() -> None:
 def test_report_derived_pass_clean_when_sigverify_passes() -> None:
     from untrust.runner import run_checks
     d = tempfile.mkdtemp()
-    rp = _write(d, "report.json", _good_report())
+    raw = json.dumps({
+        "command": ["nvattest", "attest", "--nonce", _good_report()["verification"]["nonce"]],
+        "stdout_payload": {
+            "result_code": 0,
+            "claims": [{}],
+            "detached_eat": [["JWT", "overall"], {"GPU-0": "device"}],
+        },
+    }).encode() + b"\n"
+    with open(os.path.join(d, "verification.json"), "wb") as handle:
+        handle.write(raw)
+    report = _good_report()
+    report["verification"]["raw_result_sha256"] = hashlib.sha256(raw).hexdigest()
+    rp = _write(d, "report.json", report)
     pp = _write(d, "policy.json", {
         "verify_signature": True, "pinned_measurements": ["driver", "vbios"],
         "cert_chain_to_nvidia_root": True})

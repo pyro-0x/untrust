@@ -14,7 +14,7 @@ encryption) and PCIe traffic (encrypted bounce buffers), and signs an attestatio
 report — but only if the deployment actually verifies it and keeps secrets inside
 the boundary.
 
-## Checks (17)
+## Checks (18)
 
 | Check | Severity | What it verifies |
 |-------|----------|------------------|
@@ -26,6 +26,7 @@ the boundary.
 | **GPUCC-FAILOPEN-01** | high | The verifier **fails closed** when attestation can't be checked (NRAS/RIM outage, verifier error) |
 | **GPUCC-MODE-01** | high→critical | The GPU is **CC-On**, not **CC-DevTools** (debug) or CC-Off (deduped against ATT-01 when a report is present) |
 | **GPUCC-READY-01** | critical | The workload **attests before toggling the GPU ready-state ON**, and key release is bound to a valid attestation |
+| **GPUCC-CUDA-01** | high | A CUDA challenge kernel ran on the **same GPU UUID after successful `nvattest` verification**, with the raw-result → attestation-receipt → CUDA-receipt SHA-256 chain intact |
 | **GPUCC-MODEL-01** | high | The **model/weights bootstrap store** rejects injection-shaped (path-traversal/absolute) object writes — actively probed |
 | **GPUCC-INPUT-01** | high→critical | Model weights are **loaded safely** (safetensors / `weights_only=True` + signed, digest-verified manifest), never **deserialized as code** (pickle/`torch.load` = RCE on load) |
 | **GPUCC-DECRYPT-01** | high | Model/data **decryption occurs inside the TEE**, not in untrusted host RAM (NVIDIA's documented plaintext-DEK gap) |
@@ -47,7 +48,8 @@ quote — lets a genuine GPU report be relayed onto an untrusted CPU context.
 Each check carries an **assurance tier** (console output + JSON `assurance` field)
 so a green result is read for what it is:
 
-- **`report-derived`** (5: ATT/VRAM/DMA/CVM/BIND) — read from the GPU attestation
+- **`report-derived`** (6: ATT/CUDA/VRAM/DMA/CVM/BIND) — read from retained runtime
+  evidence and the GPU attestation
   report, trustworthy **only as far as the report's signature is verified**; each
   depends on `GPUCC-SIGVERIFY-01`, and a PASS is flagged **⚠ unverified-report**
   when that hasn't passed. `RIM-01` **promotes** itself into this tier when it
@@ -132,5 +134,7 @@ introspection a deployment auditor cannot test:
 - **Plaintext RPC headers / physical-address-table** metadata, **application
   defects inside the CVM**, and **physical attacks** — all out of NVIDIA's CC
   scope.
-- **Signature / nonce freshness verification** of the attestation report belongs
-  in the workload's key-release code; GPUCC-ATT-01 inspects the report's claims.
+- **Nonce expiration windows and remote-verifier channel authentication** remain
+  workload/key-release responsibilities. SIGVERIFY-01 validates the retained
+  `nvattest` result and CUDA-01 validates the ordered runtime receipt chain, but
+  neither turns mutable guest files into tamper-proof remote audit evidence.
