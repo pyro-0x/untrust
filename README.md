@@ -10,8 +10,8 @@
   <a href="https://pypi.org/project/untrust/"><img alt="PyPI" src="https://img.shields.io/pypi/v/untrust?color=3fb950"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green"></a>
-  <img alt="Checks" src="https://img.shields.io/badge/checks-33-8957e5">
-  <img alt="Platforms" src="https://img.shields.io/badge/TEE-Nitro%20%7C%20SEV--SNP%20%7C%20TDX-39c5cf">
+  <img alt="Checks" src="https://img.shields.io/badge/checks-62-8957e5">
+  <img alt="Platforms" src="https://img.shields.io/badge/TEE-Nitro%20%7C%20SEV--SNP%20%7C%20NVIDIA%20GPU%20CC-39c5cf">
   <a href="https://defcon.org/"><img alt="DEF CON 34" src="https://img.shields.io/badge/DEF%20CON-34-ff5555"></a>
 </p>
 
@@ -19,7 +19,7 @@ Cloud TEEs (AWS Nitro Enclaves, AMD SEV-SNP, Intel TDX) promise that a fully com
 
 Every TEE workload has to receive *something* from outside: bootstrap state from cloud object storage, environment variables from the host, KMS keys whose policies should but often don't enforce attestation. None of these inputs are protected by the attestation guarantee. All of them have been used in real exploitation.
 
-`untrust` audits the trust boundaries TEE attestation does not cover, and produces a pass/fail report with concrete remediation guidance. It ships checks for two platforms today — **AWS Nitro Enclaves** and **AMD SEV-SNP on GCP Confidential Space** — behind a single `--platform` switch, and one `pip install untrust` includes both.
+`untrust` audits the trust boundaries TEE attestation does not cover, and produces a pass/fail report with concrete remediation guidance. It ships 62 checks for three platforms today — **AWS Nitro Enclaves** (33), **AMD SEV-SNP on GCP Confidential Space** (11), and **NVIDIA GPU Confidential Computing** (18) — behind a single `--platform` switch, and one `pip install untrust` includes all three.
 
 ---
 
@@ -79,6 +79,27 @@ untrust scan --platform sev-snp \
 ```
 
 Any single target flag is enough; checks whose inputs are absent report `SKIP`.
+
+### NVIDIA GPU Confidential Computing (gpu-cc)
+
+```bash
+# Demo — no GPU, driver, or attestation evidence needed
+untrust scan --platform gpu-cc --demo
+
+# List the GPU CC checks with their trust boundary and assurance tier
+untrust list-checks --platform gpu-cc
+
+# Analyze captured evidence and policy files
+untrust scan --platform gpu-cc \
+  --gpu-attestation-report evidence/report.json \
+  --gpu-verifier-policy policy.json \
+  --gpu-kbs-policy kbs.json \
+  --gpu-launch-config launch.json \
+  --gpu-model-bucket my-model-weights \
+  --output report-out.json
+```
+
+GPU CC is file-based: it reads a captured attestation report plus the verifier, key-release, and launch policies you supply. The retained `nvattest` outputs sit beside the report (see the [platform README](untrust/platforms/gpucc/README.md#evidence-files)). Any single target flag is enough; checks whose inputs are absent report `SKIP`.
 
 ### Sample output
 
@@ -200,6 +221,23 @@ The same thesis on GCP: attestation proves the code, not what you hand it at boo
 | **CSPACE-ATT-01** | A captured attestation token asserts non-debug, a signed image, a production (non-USABLE) image, and AMD SEV hardware | Trust placed in an untrusted runtime state |
 | **CSPACE-META-01 · SA-01 · SAKEY-01 · WIF-02 · IMG-01** | Five **Tier-1 attestation-bypass** paths: VM metadata mutability (`tee-image-reference`), service-account impersonation, long-lived SA keys, weaker sibling WIF providers, and workload image signing | Running attacker code *as* the attested workload, or reaching keys with no attestation at all |
 
+### NVIDIA GPU Confidential Computing — 18 checks
+
+Confidential AI on H100/H200 and Blackwell: the GPU's signed attestation is sound, but the deployment around it decides whether anyone actually verifies it, and whether model weights, keys, and the launch config stay inside the boundary. A confidential-GPU deployment is **two** TEEs (the GPU and the CPU-side TDX/SEV-SNP/CCA VM), so untrust checks both and their binding. Run `untrust list-checks --platform gpu-cc`; full detail lives in [`untrust/platforms/gpucc/README.md`](untrust/platforms/gpucc/README.md).
+
+| Check | What it verifies | Failure enables |
+|-------|-----------------|-----------------|
+| **GPUCC-ATT-01 · MODE-01** | The attestation report asserts CC-On, non-debug, a known GPU, and a signed report; the live CC mode is not DevTools/Off | Secrets handed to a debug or non-confidential GPU |
+| **GPUCC-SIGVERIFY-01 · CERT-01 · RIM-01** | The report signature is verified by a retained, nonce-bound `nvattest` result; the device cert chain reaches NVIDIA's root; driver and VBIOS golden measurements are pinned | A forged, replayed, or downgraded report is trusted |
+| **GPUCC-REATTEST-01 · FAILOPEN-01** | Attestation is continuous and fails closed on verifier error or outage | A post-attest mode flip, or a forced verifier failure, is trusted |
+| **GPUCC-READY-01 · CUDA-01** | Key release and the first CUDA kernel happen only after a successful attestation, proven by a hash-linked receipt chain on the same GPU | Data and keys reach an unverified GPU |
+| **GPUCC-MODEL-01 · INPUT-01 · DECRYPT-01** | The model store rejects injection-shaped writes (probed); weights load as data, with a signed manifest; decryption stays inside the TEE | Boot-time model poisoning, pickle RCE, plaintext keys in host RAM |
+| **GPUCC-VRAM-01 · DMA-01** | VRAM encryption is on and CPU↔GPU DMA runs over an SPDM session | Host-readable GPU memory and PCIe traffic |
+| **GPUCC-CVM-01 · BIND-01 · VMM-META-01** | The CPU-side CVM has a verified vendor quote, the GPU and CVM attestations are bound together, and the host cannot mutate the launch | A genuine GPU report relayed onto an untrusted CPU context |
+| **GPUCC-KEY-01** | The DEK and workload identity are not an attestation bypass (no host-env DEK, rotation on, no SA keys or impersonators) | Keys obtained without attestation at all |
+
+Each check carries an **assurance tier**: `report-derived` (trusted only once `GPUCC-SIGVERIFY-01` passes, otherwise flagged), `probed` (actively tested), or `operator-declared` (a policy says so). The console summary counts passes by tier so a green report is not read as stronger than its evidence.
+
 ---
 
 ## What `untrust` deliberately does *not* check (and why)
@@ -234,8 +272,9 @@ untrust scan --secret-arn ARN
 untrust scan --parameter-path /enclave/
 untrust scan --efs-id fs-0123 --db-instance prod-db
 
-# Passive scan only — skip intrusive checks (the S3 write probe and all
-# host/nitro-cli SSM commands) to avoid tripping SOC/EDR detections
+# Passive scan only — skip intrusive checks (the bucket canary-write probes on
+# every platform and the Nitro host/nitro-cli SSM commands) to avoid tripping
+# SOC/EDR detections
 untrust scan --target-bucket BUCKET --kms-key-id KEY --instance-id INSTANCE --read-only
 
 # Run in demo mode (simulated vulnerable deployment)
@@ -254,6 +293,12 @@ untrust scan --platform sev-snp --wip-provider PROVIDER --gcs-bucket BUCKET \
   --gcp-instance VM --gcp-zone ZONE --gcp-kms-key KEY
 untrust list-checks --platform sev-snp
 
+# --- NVIDIA GPU Confidential Computing ---
+untrust scan --platform gpu-cc --demo
+untrust scan --platform gpu-cc --gpu-attestation-report report.json \
+  --gpu-verifier-policy policy.json --gpu-kbs-policy kbs.json --gpu-launch-config launch.json
+untrust list-checks --platform gpu-cc
+
 # Version
 untrust --version
 ```
@@ -266,7 +311,7 @@ The `--output` and `--json` flags produce structured output suitable for integra
 
 ```json
 {
-  "version": "1.0.0",
+  "version": "1.2.0",
   "timestamp": "2026-08-24T14:30:22.000000+00:00",
   "target": {
     "bucket": "enclave-state-XXXXXXXXXXXX",
@@ -291,6 +336,7 @@ The `--output` and `--json` flags produce structured output suitable for integra
 
 - **v1.0 (DEF CON 34, August 2026):** AWS Nitro Enclaves, 33 checks (S3 + DynamoDB/Secrets Manager/SSM/EFS/RDS state backends), JSON output
 - **v1.1 — shipped:** AMD SEV-SNP on **GCP Confidential Space**, 11 checks including five Tier-1 attestation-bypass paths, behind a `--platform` switch
+- **v1.2 — shipped:** **NVIDIA GPU Confidential Computing**, 18 checks across both TEEs of a confidential-GPU deployment, with per-check assurance tiers
 - **Next:** SARIF output for GitHub code scanning; Intel TDX bootstrap integrity; Azure Confidential Containers
 - **Future:** Plugin API for vendor-specific TEE platforms
 
@@ -300,7 +346,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
-For AWS Nitro, `untrust` uses the AWS SDK (boto3) and SSM to inspect the target deployment; for GCP Confidential Space (`--platform sev-snp`) it uses the Google API client libraries (Compute, IAM, Cloud KMS, Storage) with your Application Default Credentials, and each check separates a pure `analyze_*()` function from a thin live-fetch wrapper. The AWS Nitro platform combines several families of checks (run `untrust list-checks` for the full set of 33):
+For AWS Nitro, `untrust` uses the AWS SDK (boto3) and SSM to inspect the target deployment; for GCP Confidential Space (`--platform sev-snp`) it uses the Google API client libraries (Compute, IAM, Cloud KMS, Storage) with your Application Default Credentials; for NVIDIA GPU CC (`--platform gpu-cc`) it reads captured attestation evidence and policy files, plus the model-weights bucket on Cloud Storage. Each check separates a pure `analyze_*()` function from a thin live-fetch wrapper. The AWS Nitro platform combines several families of checks (run `untrust list-checks` for the full set of 33):
 
 - **Cloud-API checks** read S3, KMS, EC2, IAM, and CloudTrail configuration directly — e.g. `KMS-01` performs semantic key-policy evaluation (rejecting all-zeros and identity-only PCR conditions), `ROLLBACK-01` reads S3 Object Lock, `S3-02` reads bucket encryption and the TLS-only policy, and `CLOUDTRAIL-01` confirms KMS/S3 activity is actually logged.
 - **Alternative-backend checks** apply the same storage-plane controls to non-S3 state stores when targeted: DynamoDB (`DDB-01`), Secrets Manager (`SECRETS-01`), SSM Parameter Store (`SSM-01`), EFS/EBS (`EFS-01`), and RDS/Aurora (`RDS-01`). Each checks for a customer-managed CMK (so `KMS-01` attestation can gate it), least-privilege/non-public access, anti-rollback, and audit coverage. CMK status is resolved authoritatively via `kms:DescribeKey` (`KeyMetadata.KeyManager`) — a string check cannot distinguish an AWS-managed service key from a customer CMK, since both surface as a resolved key ARN.
@@ -310,7 +356,7 @@ For AWS Nitro, `untrust` uses the AWS SDK (boto3) and SSM to inspect the target 
 
 ### Read-only mode
 
-`untrust scan --read-only` runs the passive cloud-API checks only and skips the intrusive ones — the `BOOTSTRAP-01` write probe and every host/enclave check that shells into the instance via SSM `AWS-RunShellScript`. Use it when you need a posture snapshot without generating write events or on-host command execution that a SOC/EDR pipeline might flag.
+`untrust scan --read-only` runs the passive checks only and skips the intrusive ones — the canary-write bucket probes (`BOOTSTRAP-01` on Nitro, `GCS-BOOT-02` on Confidential Space, `GPUCC-MODEL-01` on GPU CC) and every Nitro host/enclave check that shells into the instance via SSM `AWS-RunShellScript`. Use it when you need a posture snapshot without generating write events or on-host command execution that a SOC/EDR pipeline might flag.
 
 ### Required IAM permissions
 
@@ -415,6 +461,8 @@ The scanning identity needs the following permissions:
 ```
 
 **BOOTSTRAP-01** writes canary objects to the target bucket and deletes them after — scope the `s3:PutObject`/`s3:DeleteObject` actions to a dedicated audit role. The **host and enclave-runtime checks** (SSH-01, PORT-01, NAT-01, HOST-01, HOST-02, EXEC-01, ENV-01, VSOCK-01, DNS-01, CORE-01, SWAP-01, LOG-01, RESTART-01, ENCLAVE-01/02/03/04) execute read-only shell/`nitro-cli` commands on the host via SSM — ensure the SSM agent is running and the instance profile allows SSM sessions. The remaining checks use S3, KMS, EC2, IAM, and CloudTrail read APIs.
+
+On GCP, **GCS-BOOT-02** (Confidential Space) and **GPUCC-MODEL-01** (GPU CC) write and then delete canary objects in the target bucket the same way, so the identity needs `storage.objects.create` and `storage.objects.delete` there; use `--read-only` to skip them.
 
 ---
 

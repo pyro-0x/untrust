@@ -5,6 +5,44 @@ All notable changes to `untrust` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-30
+
+Third platform: NVIDIA GPU Confidential Computing.
+
+### Added
+
+- **NVIDIA GPU Confidential Computing platform** (`--platform gpu-cc`, 18 checks)
+  across both TEEs of a confidential-GPU deployment: report trust (ATT, MODE),
+  verification (SIGVERIFY, CERT, RIM, REATTEST, FAILOPEN), attestation ordering
+  (READY, CUDA), model inputs (MODEL probe, INPUT, DECRYPT), memory protection
+  (VRAM, DMA), the CPU-side CVM and its binding to the GPU (CVM, BIND, VMM-META),
+  and key/identity bypasses (KEY).
+- **GPUCC-SIGVERIFY-01** checks a retained `nvattest` result: the receipt must
+  match the raw output's digest and fields, and its nonce must equal the one
+  nvattest ran with, so an old passing result cannot be replayed. The result's
+  signed claims must name this report's GPU (`ueid`) and nonce, show a non-debug
+  GPU, and a successful RIM appraisal.
+- **GPUCC-CUDA-01** proves a CUDA kernel ran on the attested GPU after a
+  successful attestation, through a hash-linked receipt chain.
+- **Assurance tiers** on every GPU CC check (`report-derived`, `probed`,
+  `operator-declared`). Report-derived passes are flagged when signature
+  verification has not passed, and the console summary counts passes by tier.
+- GPU CC target flags (`--gpu-attestation-report`, `--gpu-verifier-policy`,
+  `--gpu-cc-mode`, `--gpu-kbs-policy`, `--gpu-model-bucket`,
+  `--gpu-launch-config`) and boundary/assurance columns in `list-checks`.
+
+### Fixed
+
+- `--read-only` now applies on every platform: it also skips the canary-write
+  bucket probes `GCS-BOOT-02` (sev-snp) and `GPUCC-MODEL-01` (gpu-cc), which
+  previously ran regardless.
+- `--platform` no longer offers `tdx`, which has no checks yet and crashed.
+- `untrust --version` reports the package version (it was stuck at 1.0.0).
+- Long check IDs no longer run into their summary in console output.
+- GPUCC-RIM-01 fails a report that omits a required measurement instead of
+  skipping it, and GPUCC-KEY-01 passes only an attestation-gated KBS as the DEK
+  source (file, metadata, host, or an undeclared source now fail).
+
 ## [1.1.0] - 2026-08-30
 
 Second cloud platform: AMD SEV-SNP on GCP Confidential Space.

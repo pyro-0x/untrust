@@ -14,6 +14,7 @@ except ImportError:
 
 from . import __version__
 from .checks.base import Target
+from .platforms.registry import supported_platforms
 
 
 @click.group()
@@ -25,7 +26,7 @@ def cli() -> None:
 @cli.command()
 @click.option(
     "--platform", "platform", default="nitro",
-    type=click.Choice(["nitro", "sev-snp", "tdx"]),
+    type=click.Choice(supported_platforms()),
     help="TEE platform to audit (default: nitro).",
 )
 # --- AWS Nitro target ---
@@ -65,14 +66,39 @@ def cli() -> None:
     "--attestation-token", type=click.Path(),
     help="[sev-snp] Path to a captured Confidential Space attestation token (JWT).",
 )
+# --- NVIDIA GPU Confidential Computing target ---
+@click.option(
+    "--gpu-attestation-report", type=click.Path(),
+    help="[gpu-cc] Captured GPU attestation report (JSON); nvattest outputs sit beside it.",
+)
+@click.option(
+    "--gpu-verifier-policy", type=click.Path(),
+    help="[gpu-cc] Verifier policy JSON: RIM pins, cert chain, signature, re-attest, fail-closed.",
+)
+@click.option(
+    "--gpu-cc-mode",
+    help="[gpu-cc] CC mode (nvidia-smi conf-compute -f): on|devtools|off.",
+)
+@click.option(
+    "--gpu-kbs-policy", type=click.Path(),
+    help="[gpu-cc] Key-release policy JSON: attest-before-ready, decrypt, DEK, model loading.",
+)
+@click.option(
+    "--gpu-model-bucket",
+    help="[gpu-cc] Cloud Storage bucket holding model weights (canary-write injection probe).",
+)
+@click.option(
+    "--gpu-launch-config", type=click.Path(),
+    help="[gpu-cc] Path to the CVM/GPU launch config (JSON) for the launch-mutability check.",
+)
 @click.option("--output", "output_path", type=click.Path(), help="Write JSON report to this path.")
 @click.option("--json", "json_output", is_flag=True, help="Print JSON output to stdout.")
 @click.option(
     "--read-only", "read_only", is_flag=True,
     help=(
-        "Passive scan only: skip intrusive checks (the S3 path-traversal "
-        "write probe and all host shell/nitro-cli checks run via SSM) to "
-        "avoid tripping SOC/EDR detections."
+        "Passive scan only: skip intrusive checks (the canary-write bucket "
+        "probes on every platform, and the Nitro host shell/nitro-cli checks "
+        "run via SSM) to avoid tripping SOC/EDR detections."
     ),
 )
 @click.option(
@@ -97,6 +123,12 @@ def scan(
     gcp_instance: str | None,
     gcp_zone: str | None,
     attestation_token: str | None,
+    gpu_attestation_report: str | None,
+    gpu_verifier_policy: str | None,
+    gpu_cc_mode: str | None,
+    gpu_kbs_policy: str | None,
+    gpu_model_bucket: str | None,
+    gpu_launch_config: str | None,
     output_path: str | None,
     json_output: bool,
     read_only: bool,
@@ -104,7 +136,7 @@ def scan(
 ) -> None:
     """Run all audit checks against a target deployment."""
     from .platforms import checks_for, demo_for
-    from .runner import format_console, format_json, run_all, run_checks
+    from .runner import format_console, format_json, passive_only, run_all, run_checks
 
     if demo:
         target, findings = demo_for(platform)
@@ -137,6 +169,15 @@ def scan(
         id_hint = (
             "--target-bucket, --kms-key-id, --instance-id, --dynamodb-table, "
             "--secret-arn, --parameter-path, --efs-id, or --db-instance"
+        )
+    elif platform == "gpu-cc":
+        identifiers = [
+            gpu_attestation_report, gpu_verifier_policy, gpu_cc_mode,
+            gpu_kbs_policy, gpu_model_bucket, gpu_launch_config,
+        ]
+        id_hint = (
+            "--gpu-attestation-report, --gpu-verifier-policy, --gpu-cc-mode, "
+            "--gpu-kbs-policy, --gpu-model-bucket, or --gpu-launch-config"
         )
     else:  # sev-snp (and future platforms)
         identifiers = [wip_provider, gcp_kms_key, gcs_bucket, gcp_instance, attestation_token]
@@ -171,17 +212,27 @@ def scan(
         gcp_instance=gcp_instance,
         gcp_zone=gcp_zone,
         attestation_token=attestation_token,
+        gpu_attestation_report=gpu_attestation_report,
+        gpu_verifier_policy=gpu_verifier_policy,
+        gpu_cc_mode=gpu_cc_mode,
+        gpu_kbs_policy=gpu_kbs_policy,
+        gpu_model_bucket=gpu_model_bucket,
+        gpu_launch_config=gpu_launch_config,
     )
 
+    if read_only:
+        skipped = (
+            "S3 write probe + host SSM commands" if platform == "nitro"
+            else "bucket canary-write probe"
+        )
+        click.echo(f"\033[36mREAD-ONLY MODE — skipping intrusive checks ({skipped}).\033[0m")
     if platform == "nitro":
-        if read_only:
-            click.echo(
-                "\033[36mREAD-ONLY MODE — skipping intrusive checks "
-                "(S3 write probe + host SSM commands).\033[0m"
-            )
         findings = run_all(target, read_only=read_only)
     else:
-        findings = run_checks(target, checks_for(platform))
+        check_classes = checks_for(platform)
+        if read_only:
+            check_classes = passive_only(platform, check_classes)
+        findings = run_checks(target, check_classes)
     click.echo(format_console(findings, target))
 
     if output_path or json_output:
@@ -200,7 +251,7 @@ def scan(
 @cli.command(name="list-checks")
 @click.option(
     "--platform", "platform", default="nitro",
-    type=click.Choice(["nitro", "sev-snp", "tdx"]),
+    type=click.Choice(supported_platforms()),
     help="TEE platform whose checks to list (default: nitro).",
 )
 def list_checks(platform: str) -> None:
@@ -208,12 +259,29 @@ def list_checks(platform: str) -> None:
     from .platforms import checks_for
 
     check_classes = checks_for(platform)
+    # Show the boundary/assurance columns only when the platform classifies them.
+    tagged = any(c.boundary or c.assurance for c in check_classes)
     click.echo(f"Platform: {platform}\n")
-    click.echo(f"{'CHECK':<18}{'SEVERITY':<12}TITLE")
-    click.echo(f"{'─' * 17} {'─' * 11} {'─' * 40}")
-    for check_cls in check_classes:
-        check = check_cls()
-        click.echo(f"{check.check_id:<18}{check.severity.value:<12}{check.title}")
+    if tagged:
+        click.echo(f"{'CHECK':<19}{'SEVERITY':<10}{'BOUNDARY':<13}{'ASSURANCE':<19}TITLE")
+        click.echo(f"{'─' * 18} {'─' * 9} {'─' * 12} {'─' * 18} {'─' * 30}")
+        for check_cls in check_classes:
+            c = check_cls()
+            boundary = c.boundary.value if c.boundary else "-"
+            assurance = c.assurance.value if c.assurance else "-"
+            click.echo(
+                f"{c.check_id:<19}{c.severity.value:<10}{boundary:<13}{assurance:<19}{c.title}"
+            )
+        click.echo(
+            "\nassurance: report-derived (trust gated on GPUCC-SIGVERIFY-01) · "
+            "probed (actively tested) · operator-declared (a policy says so)."
+        )
+    else:
+        click.echo(f"{'CHECK':<18}{'SEVERITY':<12}TITLE")
+        click.echo(f"{'─' * 17} {'─' * 11} {'─' * 40}")
+        for check_cls in check_classes:
+            check = check_cls()
+            click.echo(f"{check.check_id:<18}{check.severity.value:<12}{check.title}")
     click.echo(f"\n{len(check_classes)} checks available.")
 
 

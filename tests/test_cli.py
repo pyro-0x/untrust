@@ -95,3 +95,36 @@ def test_read_only_excludes_intrusive() -> None:
     passive_ids = {c.check_id for c in passive}
     # No intrusive check leaks into a read-only run.
     assert passive_ids.isdisjoint(INTRUSIVE_CHECK_IDS)
+
+
+def test_version_matches_package_metadata() -> None:
+    import re
+    from pathlib import Path
+
+    pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    assert f'version = "{__version__}"' in re.findall(r'^version = ".*"$', pyproject, re.M)
+
+
+def test_only_implemented_platforms_are_offered() -> None:
+    result = CliRunner().invoke(cli, ["scan", "--platform", "tdx", "--demo"])
+    assert result.exit_code == 2 and "Invalid value" in result.output
+
+
+def test_platform_intrusive_ids_are_real_checks() -> None:
+    from untrust.platforms import checks_for
+    from untrust.runner import PLATFORM_INTRUSIVE_CHECK_IDS
+
+    for platform, intrusive in PLATFORM_INTRUSIVE_CHECK_IDS.items():
+        assert intrusive <= {c.check_id for c in checks_for(platform)}, platform
+
+
+def test_read_only_skips_bucket_probes_on_every_platform() -> None:
+    # Without --read-only these would write canaries to a live bucket.
+    for args, probe in (
+        (["--platform", "gpu-cc", "--gpu-cc-mode", "on",
+          "--gpu-model-bucket", "weights"], "GPUCC-MODEL-01"),
+        (["--platform", "sev-snp", "--gcs-bucket", "state"], "GCS-BOOT-02"),
+    ):
+        result = CliRunner().invoke(cli, ["scan", *args, "--read-only"])
+        assert "READ-ONLY MODE" in result.output
+        assert probe not in result.output

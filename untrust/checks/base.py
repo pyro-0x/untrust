@@ -25,6 +25,40 @@ class Severity(str, Enum):
     INFO = "info"
 
 
+class Assurance(str, Enum):
+    """How much a PASS can be trusted — what evidence backs the verdict.
+
+    A deployment auditor's checks are not equally strong, and a raw pass-count
+    hides that. ``PROBED`` checks actively test the live surface. ``REPORT_DERIVED``
+    checks read their verdict from the attestation report — trustworthy *only as
+    far as that report's signature is verified* (see ``assurance_depends_on``); an
+    unverified report is just a JSON file the untrusted host could have written.
+    ``DECLARED`` checks only confirm that an operator-authored policy/config *says*
+    the right thing — an honesty box: a lying policy passes. Surfacing this level
+    stops a high PASS count from reading as stronger assurance than it is. Left
+    ``None`` for checks that have not been classified (e.g. the Nitro set), which
+    changes their output not at all.
+    """
+    PROBED = "probed"
+    REPORT_DERIVED = "report-derived"
+    DECLARED = "operator-declared"
+
+
+class Boundary(str, Enum):
+    """The trust boundary a check audits (the untrust/DEF CON thesis).
+
+    Attestation proves the code, not what crosses these boundaries at/after boot:
+    the ``INPUTS`` the workload loads (weights, data, keys), the runtime ``MEMORY``
+    those secrets pass through, and the untrusted ``VMM`` that controls the launch —
+    plus the ``ATTESTATION`` machinery itself and the underlying ``CVM``.
+    """
+    ATTESTATION = "attestation"
+    INPUTS = "inputs"
+    MEMORY = "memory"
+    VMM = "vmm"
+    CVM = "cvm"
+
+
 @dataclass
 class Finding:
     check_id: str
@@ -34,6 +68,11 @@ class Finding:
     summary: str
     remediation: str = ""
     evidence: dict[str, Any] = field(default_factory=dict)
+    # How much a PASS/FAIL can be trusted; None = unclassified (unchanged output).
+    assurance: Assurance | None = None
+    # Set by the runner when a REPORT_DERIVED verdict's precondition (a signature
+    # verification it depends on) did not pass — i.e. the report is unverified.
+    assurance_note: str | None = None
 
 
 @dataclass
@@ -79,6 +118,22 @@ class Target:
     # runtime attestation checks, when a live token can be captured.
     attestation_token: str | None = None
 
+    # --- NVIDIA GPU Confidential Computing (gpu-cc) ---
+    # Path to a captured NVIDIA GPU attestation report (JSON).
+    gpu_attestation_report: str | None = None
+    # Path to the relying party's verifier policy (JSON): pinned RIM measurements,
+    # cert-chain validation, revocation, nonce/expiry.
+    gpu_verifier_policy: str | None = None
+    # CC mode string as reported by `nvidia-smi conf-compute -f`: on|devtools|off.
+    gpu_cc_mode: str | None = None
+    # Path to the key-release / KBS policy (JSON): attest-before-ready,
+    # attestation-bound release, decrypt location.
+    gpu_kbs_policy: str | None = None
+    # Object store holding model weights/data, for the boot-time injection probe.
+    gpu_model_bucket: str | None = None
+    # Path to the CVM/GPU launch config (JSON) for the launch-mutability check.
+    gpu_launch_config: str | None = None
+
 
 class Check:
     """Subclass and implement ``run()`` to add a new audit."""
@@ -86,6 +141,16 @@ class Check:
     check_id: str = ""
     title: str = ""
     severity: Severity = Severity.MEDIUM
+    # Evidence tier for this check's verdict (see ``Assurance``). The runner stamps
+    # it onto findings that don't set one themselves; None leaves output unchanged.
+    assurance: Assurance | None = None
+    # Which trust boundary this check audits (see ``Boundary``); None = unclassified.
+    boundary: Boundary | None = None
+    # Check IDs whose PASS is required for a REPORT_DERIVED verdict to be trusted.
+    # A report-derived check reads a signed report; if the signature was never
+    # verified (its verifier check did not pass), the runner flags the verdict as
+    # unverified via ``Finding.assurance_note``.
+    assurance_depends_on: tuple[str, ...] = ()
 
     def run(self, target: Target) -> Finding:  # pragma: no cover - abstract
         raise NotImplementedError
