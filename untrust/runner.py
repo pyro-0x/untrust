@@ -93,6 +93,21 @@ INTRUSIVE_CHECK_IDS: frozenset[str] = frozenset({
     "RESTART-01", "ENCLAVE-01", "ENCLAVE-02", "ENCLAVE-03", "ENCLAVE-04",
 })
 
+# Active probes on the other platforms: each writes (then deletes) canary objects
+# in the target bucket, so --read-only excludes them too.
+PLATFORM_INTRUSIVE_CHECK_IDS: dict[str, frozenset[str]] = {
+    "nitro": INTRUSIVE_CHECK_IDS,
+    "sev-snp": frozenset({"GCS-BOOT-02"}),
+    "gpu-cc": frozenset({"GPUCC-MODEL-01"}),
+}
+
+
+def passive_only(platform: str, check_classes: list[type[Check]]) -> list[type[Check]]:
+    """Drop the platform's intrusive checks (the --read-only check set)."""
+    intrusive = PLATFORM_INTRUSIVE_CHECK_IDS.get(platform, frozenset())
+    return [c for c in check_classes if c.check_id not in intrusive]
+
+
 def selected_checks(read_only: bool = False) -> list[type[Check]]:
     """Return the checks to run. In read-only mode, drop intrusive checks."""
     if not read_only:

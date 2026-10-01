@@ -14,6 +14,7 @@ except ImportError:
 
 from . import __version__
 from .checks.base import Target
+from .platforms.registry import supported_platforms
 
 
 @click.group()
@@ -25,7 +26,7 @@ def cli() -> None:
 @cli.command()
 @click.option(
     "--platform", "platform", default="nitro",
-    type=click.Choice(["nitro", "sev-snp", "gpu-cc", "tdx"]),
+    type=click.Choice(supported_platforms()),
     help="TEE platform to audit (default: nitro).",
 )
 # --- AWS Nitro target ---
@@ -68,11 +69,11 @@ def cli() -> None:
 # --- NVIDIA GPU Confidential Computing target ---
 @click.option(
     "--gpu-attestation-report", type=click.Path(),
-    help="[gpu-cc] Path to a captured NVIDIA GPU attestation report (JSON).",
+    help="[gpu-cc] Captured GPU attestation report (JSON); nvattest outputs sit beside it.",
 )
 @click.option(
     "--gpu-verifier-policy", type=click.Path(),
-    help="[gpu-cc] Verifier policy JSON: pinned RIM measurements, cert chain, revocation.",
+    help="[gpu-cc] Verifier policy JSON: RIM pins, cert chain, signature, re-attest, fail-closed.",
 )
 @click.option(
     "--gpu-cc-mode",
@@ -80,11 +81,11 @@ def cli() -> None:
 )
 @click.option(
     "--gpu-kbs-policy", type=click.Path(),
-    help="[gpu-cc] Key-release policy JSON: attest-before-ready, decrypt location.",
+    help="[gpu-cc] Key-release policy JSON: attest-before-ready, decrypt, DEK, model loading.",
 )
 @click.option(
     "--gpu-model-bucket",
-    help="[gpu-cc] Object store holding model weights (injection probe).",
+    help="[gpu-cc] Cloud Storage bucket holding model weights (canary-write injection probe).",
 )
 @click.option(
     "--gpu-launch-config", type=click.Path(),
@@ -95,9 +96,9 @@ def cli() -> None:
 @click.option(
     "--read-only", "read_only", is_flag=True,
     help=(
-        "Passive scan only: skip intrusive checks (the S3 path-traversal "
-        "write probe and all host shell/nitro-cli checks run via SSM) to "
-        "avoid tripping SOC/EDR detections."
+        "Passive scan only: skip intrusive checks (the canary-write bucket "
+        "probes on every platform, and the Nitro host shell/nitro-cli checks "
+        "run via SSM) to avoid tripping SOC/EDR detections."
     ),
 )
 @click.option(
@@ -135,7 +136,7 @@ def scan(
 ) -> None:
     """Run all audit checks against a target deployment."""
     from .platforms import checks_for, demo_for
-    from .runner import format_console, format_json, run_all, run_checks
+    from .runner import format_console, format_json, passive_only, run_all, run_checks
 
     if demo:
         target, findings = demo_for(platform)
@@ -219,15 +220,19 @@ def scan(
         gpu_launch_config=gpu_launch_config,
     )
 
+    if read_only:
+        skipped = (
+            "S3 write probe + host SSM commands" if platform == "nitro"
+            else "bucket canary-write probe"
+        )
+        click.echo(f"\033[36mREAD-ONLY MODE — skipping intrusive checks ({skipped}).\033[0m")
     if platform == "nitro":
-        if read_only:
-            click.echo(
-                "\033[36mREAD-ONLY MODE — skipping intrusive checks "
-                "(S3 write probe + host SSM commands).\033[0m"
-            )
         findings = run_all(target, read_only=read_only)
     else:
-        findings = run_checks(target, checks_for(platform))
+        check_classes = checks_for(platform)
+        if read_only:
+            check_classes = passive_only(platform, check_classes)
+        findings = run_checks(target, check_classes)
     click.echo(format_console(findings, target))
 
     if output_path or json_output:
@@ -246,7 +251,7 @@ def scan(
 @cli.command(name="list-checks")
 @click.option(
     "--platform", "platform", default="nitro",
-    type=click.Choice(["nitro", "sev-snp", "gpu-cc", "tdx"]),
+    type=click.Choice(supported_platforms()),
     help="TEE platform whose checks to list (default: nitro).",
 )
 def list_checks(platform: str) -> None:

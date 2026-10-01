@@ -37,8 +37,7 @@ the boundary.
 | **GPUCC-BIND-01** | high→critical | The GPU attestation is **cryptographically bound to the CVM** measurement (the two TEEs can't be relayed/mixed-and-matched) |
 | **GPUCC-KEY-01** | high→critical | The DEK / workload identity is **not an attestation bypass** (no host-env DEK, rotation on, no SA user-managed keys or impersonators) |
 
-CVM-01 and BIND-01 came out of the live red-team campaign (see
-`infrastructure/tee-labs/gcp-a3-gpu-cc/reports/live-redteam-campaign.md`): a
+CVM-01 and BIND-01 came out of live red-team testing: a
 confidential-GPU deployment is **two** TEEs (the H100 and the CPU TDX/SEV-SNP CVM),
 and verifying only the GPU report — while never checking or binding the CPU-side
 quote — lets a genuine GPU report be relayed onto an untrusted CPU context.
@@ -106,6 +105,23 @@ untrust scan --platform gpu-cc \
 ```
 
 Any single target flag is enough; checks whose inputs are absent report `SKIP`.
+`--read-only` skips GPUCC-MODEL-01, the one check that writes (and then deletes)
+canary objects in the model bucket. The model-store probe uses Cloud Storage.
+
+### Evidence files
+
+SIGVERIFY-01 and CUDA-01 read retained verifier output from the same directory
+as `--gpu-attestation-report`:
+
+| File | Holds | Read by |
+|------|-------|---------|
+| `verification.json` | Raw boot-time `nvattest` result: `command` (including `--nonce`) and `stdout_payload` | SIGVERIFY-01 |
+| `runtime-attestation.json` | The runtime attestation receipt the CUDA receipt hash-links | CUDA-01 |
+| `runtime-verification.json` | Raw runtime `nvattest` result, hash-linked from that receipt | CUDA-01 |
+
+Each receipt must match its raw result's SHA-256, result code, claim count, and
+detached EAT, and its nonce must equal the `--nonce` nvattest was run with, so
+an old passing result cannot be replayed under a new receipt.
 
 ## Environment & dependencies
 
