@@ -32,6 +32,7 @@ from untrust.platforms.gpucc.rim_measurement import GpuRimPinningCheck, analyze_
 from untrust.platforms.gpucc.signature_verify import (
     GpuSignatureVerifyCheck,
     analyze_signature_verification,
+    nvattest_claims_bind,
 )
 from untrust.platforms.gpucc.vram_encryption import analyze_vram_encryption
 from untrust.runner import format_console
@@ -40,7 +41,7 @@ from untrust.runner import format_console
 def _good_report() -> dict[str, Any]:
     return {
         "cc_mode": "on",
-        "gpu": {"model": "H100", "uuid": "GPU-1", "debug": False},
+        "gpu": {"model": "H100", "uuid": "GPU-1", "ueid": "UEID-1", "debug": False},
         "measurements": {"driver": "610.57.04", "vbios": "96.00.d9.00.01"},
         "signature": {"present": True, "verified": True},
         "verification": {
@@ -72,6 +73,11 @@ def _good_report() -> dict[str, Any]:
             "cvm_quote_includes_gpu_identity": True,
         },
     }
+
+
+def _claims(nonce: str, ueid: str = "UEID-1") -> list[dict[str, Any]]:
+    """One nvattest GPU claim set for the attested GPU and nonce."""
+    return [{"eat_nonce": nonce, "ueid": ueid, "dbgstat": "disabled", "measres": "success"}]
 
 
 def _write(d: str, name: str, obj: dict[str, Any]) -> str:
@@ -229,6 +235,7 @@ def test_signature_verification_requires_valid_live_receipt_when_report_supplied
         raw_result_valid=True,
         receipt_matches_raw=True,
         command_nonce_matches=True,
+        claims_bind_report=True,
     )
     assert verified["passed"] is True and verified["receipt_valid"] is True
 
@@ -253,6 +260,7 @@ def test_signature_verification_rejects_declared_only_capture() -> None:
         raw_result_valid=True,
         receipt_matches_raw=True,
         command_nonce_matches=True,
+        claims_bind_report=True,
     )["passed"] is False
 
 
@@ -264,14 +272,16 @@ def test_signature_verification_rejects_receipt_nonce_not_from_the_command() -> 
         raw_result_valid=True,
         receipt_matches_raw=True,
         command_nonce_matches=False,
+        claims_bind_report=True,
     )["passed"] is False
 
 
-def _write_boot_evidence(directory: str, command_nonce: str) -> str:
+def _write_boot_evidence(directory: str, command_nonce: str, ueid: str = "UEID-1") -> str:
     """A report beside a retained nvattest result run with ``command_nonce``."""
     raw = (json.dumps({
         "command": ["nvattest", "attest", "--nonce", command_nonce],
-        "stdout_payload": {"result_code": 0, "claims": [{}], "detached_eat": "eat"},
+        "stdout_payload": {"result_code": 0, "claims": _claims("a" * 64, ueid),
+                           "detached_eat": "eat"},
     }) + "\n").encode()
     with open(os.path.join(directory, "verification.json"), "wb") as handle:
         handle.write(raw)
@@ -293,6 +303,48 @@ def test_signature_check_binds_receipt_to_the_nvattest_invocation() -> None:
         Target(platform="gpu-cc", gpu_verifier_policy=policy, gpu_attestation_report=replayed))
     assert finding.status == Status.FAIL
     assert finding.evidence["command_nonce_matches"] is False
+
+
+def test_signature_check_rejects_a_result_for_a_different_gpu() -> None:
+    # A genuine passing nvattest result from another device must not vouch for
+    # this report's GPU and measurements.
+    policy = _write(tempfile.mkdtemp(), "policy.json", {"verify_signature": True})
+    nonce = _good_report()["verification"]["nonce"]
+    other = _write_boot_evidence(tempfile.mkdtemp(), nonce, ueid="UEID-OTHER")
+    finding = GpuSignatureVerifyCheck().run(
+        Target(platform="gpu-cc", gpu_verifier_policy=policy, gpu_attestation_report=other))
+    assert finding.status == Status.FAIL
+    assert finding.evidence["claims_bind_report"] is False
+
+
+def test_nvattest_claims_bind_nonce_device_and_appraisal() -> None:
+    raw = {"stdout_payload": {"claims": _claims("a" * 64)}}
+    assert nvattest_claims_bind(raw, nonce="a" * 64, report=_good_report())["passed"]
+    for broken in ({"eat_nonce": "b" * 64}, {"ueid": "UEID-2"},
+                   {"dbgstat": "enabled"}, {"measres": "fail"}):
+        claims = _claims("a" * 64)
+        claims[0].update(broken)
+        v = nvattest_claims_bind({"stdout_payload": {"claims": claims}},
+                                 nonce="a" * 64, report=_good_report())
+        assert v["passed"] is False, broken
+
+
+def test_rim_report_missing_a_required_measurement_fails() -> None:
+    report = _good_report()
+    del report["measurements"]["driver"]
+    v = analyze_rim_pinning({"pinned_measurements": ["vbios"]}, report)
+    assert v["passed"] is False
+    assert any("missing required measurement 'driver'" in i for i in v["issues"])
+
+
+def test_key_hygiene_accepts_only_an_attestation_gated_kbs() -> None:
+    good = {"dek_source": "kbs", "key_rotation_days": 30,
+            "sa_user_managed_keys": 0, "sa_impersonators": []}
+    assert analyze_key_hygiene(good)["passed"] is True
+    for source in ("file", "metadata", "host", ""):
+        assert analyze_key_hygiene({**good, "dek_source": source})["passed"] is False, source
+    assert analyze_key_hygiene({k: v for k, v in good.items() if k != "dek_source"})[
+        "passed"] is False
 
 
 def test_console_report_never_runs_a_long_check_id_into_its_summary() -> None:
@@ -324,6 +376,7 @@ def test_cuda_execution_requires_ordered_receipt_chain() -> None:
         raw_result_valid=True,
         receipt_matches_raw=True,
         command_nonce_matches=True,
+        claims_bind_report=True,
     )
     assert result["passed"] is True
 
@@ -336,6 +389,7 @@ def test_cuda_execution_requires_ordered_receipt_chain() -> None:
         raw_result_valid=True,
         receipt_matches_raw=True,
         command_nonce_matches=True,
+        claims_bind_report=True,
     )["passed"] is False
 
 
@@ -349,6 +403,7 @@ def test_cuda_execution_rejects_wrong_gpu_or_unlinked_attestation() -> None:
         raw_result_valid=True,
         receipt_matches_raw=True,
         command_nonce_matches=True,
+        claims_bind_report=True,
     )["passed"] is False
 
     report = _good_report()
@@ -360,6 +415,7 @@ def test_cuda_execution_rejects_wrong_gpu_or_unlinked_attestation() -> None:
         raw_result_valid=True,
         receipt_matches_raw=True,
         command_nonce_matches=True,
+        claims_bind_report=True,
     )["passed"] is False
 
 
@@ -369,7 +425,7 @@ def test_cuda_execution_check_recomputes_both_digests() -> None:
         "command": ["nvattest", "attest", "--nonce", "e" * 64],
         "stdout_payload": {
             "result_code": 0,
-            "claims": [{}],
+            "claims": _claims("e" * 64),
             "detached_eat": [["JWT", "overall"], {"GPU-0": "device"}],
         },
     }
@@ -590,7 +646,7 @@ def test_report_derived_pass_clean_when_sigverify_passes() -> None:
         "command": ["nvattest", "attest", "--nonce", _good_report()["verification"]["nonce"]],
         "stdout_payload": {
             "result_code": 0,
-            "claims": [{}],
+            "claims": _claims("a" * 64),
             "detached_eat": [["JWT", "overall"], {"GPU-0": "device"}],
         },
     }).encode() + b"\n"

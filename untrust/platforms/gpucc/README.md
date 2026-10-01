@@ -123,6 +123,12 @@ Each receipt must match its raw result's SHA-256, result code, claim count, and
 detached EAT, and its nonce must equal the `--nonce` nvattest was run with, so
 an old passing result cannot be replayed under a new receipt.
 
+The raw result's single GPU claim set must also describe this report: its signed
+`eat_nonce` equals the receipt nonce, its `ueid` equals the report's `gpu.ueid`,
+`dbgstat` is `disabled`, and `measres` is `success`. A passing result from a
+different GPU or attestation run therefore cannot vouch for the report, so the
+normalized report must carry the attested device's `gpu.ueid`.
+
 ## Environment & dependencies
 
 Deployment targets: **Azure NCC H100 v5** (CVM on an Intel TDX host + H100 NVL,

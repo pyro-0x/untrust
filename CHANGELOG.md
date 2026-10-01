@@ -19,7 +19,9 @@ Third platform: NVIDIA GPU Confidential Computing.
   and key/identity bypasses (KEY).
 - **GPUCC-SIGVERIFY-01** checks a retained `nvattest` result: the receipt must
   match the raw output's digest and fields, and its nonce must equal the one
-  nvattest ran with, so an old passing result cannot be replayed.
+  nvattest ran with, so an old passing result cannot be replayed. The result's
+  signed claims must name this report's GPU (`ueid`) and nonce, show a non-debug
+  GPU, and a successful RIM appraisal.
 - **GPUCC-CUDA-01** proves a CUDA kernel ran on the attested GPU after a
   successful attestation, through a hash-linked receipt chain.
 - **Assurance tiers** on every GPU CC check (`report-derived`, `probed`,
@@ -37,6 +39,9 @@ Third platform: NVIDIA GPU Confidential Computing.
 - `--platform` no longer offers `tdx`, which has no checks yet and crashed.
 - `untrust --version` reports the package version (it was stuck at 1.0.0).
 - Long check IDs no longer run into their summary in console output.
+- GPUCC-RIM-01 fails a report that omits a required measurement instead of
+  skipping it, and GPUCC-KEY-01 passes only an attestation-gated KBS as the DEK
+  source (file, metadata, host, or an undeclared source now fail).
 
 ## [1.1.0] - 2026-08-30
 

@@ -47,6 +47,37 @@ def analyze_nvattest_result(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def nvattest_claims_bind(
+    raw: dict[str, Any], *, nonce: Any, report: dict[str, Any]
+) -> dict[str, Any]:
+    """Check the retained nvattest claims describe this report's GPU and nonce.
+
+    A successful result for a different GPU or a different attestation run must
+    not vouch for this report: the signed ``eat_nonce`` has to equal the receipt
+    nonce, the device ``ueid`` has to equal the report's ``gpu.ueid``, and the
+    claims must show a non-debug GPU whose RIM appraisal succeeded.
+    """
+    payload = raw.get("stdout_payload") if "stdout_payload" in raw else raw
+    claims = payload.get("claims") if isinstance(payload, dict) else None
+    gpu_claims = claims[0] if isinstance(claims, list) and len(claims) == 1 else None
+    report_gpu = report.get("gpu") or {}
+    issues: list[str] = []
+    if not isinstance(gpu_claims, dict):
+        issues.append("nvattest output does not carry exactly one GPU claim set")
+        gpu_claims = {}
+    claim_nonce = str(gpu_claims.get("eat_nonce") or "").lower()
+    if not claim_nonce or claim_nonce != str(nonce or "").lower():
+        issues.append("the signed eat_nonce does not match the receipt nonce")
+    claim_ueid = str(gpu_claims.get("ueid") or "")
+    if not claim_ueid or claim_ueid != str(report_gpu.get("ueid") or ""):
+        issues.append("the attested device ueid does not match the report's gpu.ueid")
+    if gpu_claims.get("dbgstat") != "disabled" or report_gpu.get("debug") is True:
+        issues.append("the attested GPU is not confirmed out of debug mode")
+    if gpu_claims.get("measres") != "success":
+        issues.append("the RIM measurement appraisal did not succeed (measres)")
+    return {"issues": issues, "passed": not issues}
+
+
 def nvattest_command_nonce(raw: dict[str, Any]) -> str | None:
     """The ``--nonce`` value the retained nvattest command was invoked with."""
     command = raw.get("command") or []
@@ -65,6 +96,7 @@ def analyze_signature_verification(
     raw_result_valid: bool | None = None,
     receipt_matches_raw: bool | None = None,
     command_nonce_matches: bool | None = None,
+    claims_bind_report: bool | None = None,
 ) -> dict[str, Any]:
     """Assess declared verification and, when supplied, a live verifier receipt."""
     verify = bool(policy.get("verify_signature", False))
@@ -98,11 +130,12 @@ def analyze_signature_verification(
             and raw_result_valid is True
             and receipt_matches_raw is True
             and command_nonce_matches is True
+            and claims_bind_report is True
         )
         if not receipt_valid:
             issues.append(
-                "captured evidence lacks a successful nvattest receipt bound to a fresh "
-                "32-byte nonce and raw-result digest"
+                "captured evidence lacks a successful nvattest result bound to this "
+                "report's GPU (ueid), a fresh 32-byte nonce, and its raw-result digest"
             )
     return {
         "verify_signature": verify,
@@ -114,6 +147,7 @@ def analyze_signature_verification(
         "raw_result_valid": raw_result_valid,
         "receipt_matches_raw": receipt_matches_raw,
         "command_nonce_matches": command_nonce_matches,
+        "claims_bind_report": claims_bind_report,
         "issues": issues,
         "passed": not issues,
     }
@@ -154,6 +188,7 @@ class GpuSignatureVerifyCheck(Check):
         raw_result_valid = None
         receipt_matches_raw = None
         command_nonce_matches = None
+        claims_bind_report = None
         if report is not None and report_path_value is not None:
             expected_digest = str((report.get("verification") or {}).get(
                 "raw_result_sha256", ""
@@ -183,6 +218,11 @@ class GpuSignatureVerifyCheck(Check):
                 command_nonce_matches = (
                     command_nonce is not None and command_nonce == receipt.get("nonce")
                 )
+                # ...and to this report's GPU, so a result from another device or
+                # attestation run can't vouch for these measurements.
+                claims_bind_report = nvattest_claims_bind(
+                    raw_result, nonce=receipt.get("nonce"), report=report
+                )["passed"]
         v = analyze_signature_verification(
             policy,
             report,
@@ -190,6 +230,7 @@ class GpuSignatureVerifyCheck(Check):
             raw_result_valid=raw_result_valid,
             receipt_matches_raw=receipt_matches_raw,
             command_nonce_matches=command_nonce_matches,
+            claims_bind_report=claims_bind_report,
         )
         tier = Assurance.REPORT_DERIVED if v["receipt_valid"] else None
         if not v["passed"]:

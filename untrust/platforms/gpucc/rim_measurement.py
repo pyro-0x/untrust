@@ -60,9 +60,12 @@ def analyze_rim_pinning(policy: dict[str, Any], report: dict[str, Any]) -> dict[
         )
     else:
         for m in required:
-            present = (m in report_measurements) if report_measurements else True
-            if present and m not in pinned:
+            if m not in pinned:
                 issues.append(f"golden measurement '{m}' is not pinned by the verifier policy")
+            # A report that carries measurements must carry every required one; a
+            # missing one would otherwise skip both pinning and value checks.
+            if report_measurements and m not in report_measurements:
+                issues.append(f"the attestation report is missing required measurement '{m}'")
 
     # Strong, report-derived signal: compare the operator's golden values against
     # the report's actual measurement values. A mismatch is a downgraded/tampered

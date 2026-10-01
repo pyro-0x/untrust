@@ -20,7 +20,11 @@ from typing import Any
 
 from ...checks.base import Check, Finding, Severity, Status, Target
 from ._io import load_json_file
-from .signature_verify import analyze_nvattest_result, nvattest_command_nonce
+from .signature_verify import (
+    analyze_nvattest_result,
+    nvattest_claims_bind,
+    nvattest_command_nonce,
+)
 
 
 def _is_sha256(value: Any) -> bool:
@@ -40,6 +44,7 @@ def analyze_cuda_execution(
     raw_result_valid: bool | None = None,
     receipt_matches_raw: bool | None = None,
     command_nonce_matches: bool | None = None,
+    claims_bind_report: bool | None = None,
 ) -> dict[str, Any]:
     """Assess CUDA execution and its ordering after a retained nvattest result."""
     cuda = report.get("cuda_execution") or {}
@@ -93,6 +98,8 @@ def analyze_cuda_execution(
         issues.append("runtime attestation receipt does not match the retained raw result")
     if command_nonce_matches is not True:
         issues.append("runtime verifier command nonce does not match the attestation receipt")
+    if claims_bind_report is not True:
+        issues.append("runtime nvattest claims do not match the report's GPU and receipt nonce")
 
     return {
         "executed": cuda.get("executed") is True,
@@ -107,6 +114,7 @@ def analyze_cuda_execution(
         "raw_result_valid": raw_result_valid,
         "receipt_matches_raw": receipt_matches_raw,
         "command_nonce_matches": command_nonce_matches,
+        "claims_bind_report": claims_bind_report,
         "runtime_attestation_valid": attestation_valid,
         "issues": issues,
         "passed": not issues,
@@ -190,6 +198,9 @@ class GpuCudaExecutionCheck(Check):
             raw_result_valid=raw_analysis["passed"],
             receipt_matches_raw=receipt_matches_raw,
             command_nonce_matches=command_nonce_matches,
+            claims_bind_report=nvattest_claims_bind(
+                raw_result, nonce=runtime_receipt.get("nonce"), report=report
+            )["passed"],
         )
         if not result["passed"]:
             return Finding(

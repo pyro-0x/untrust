@@ -12,7 +12,7 @@ GPU-specific DEK-in-env mistake:
   * principals can impersonate the workload SA — mint its identity and reach the
     key/data with no attestation.
 
-Input: the key-release policy — ``dek_source`` ('kbs'|'env'), ``key_rotation_days``
+Input: the key-release policy — ``dek_source`` (only 'kbs' passes), ``key_rotation_days``
 (null/0 = none), ``sa_user_managed_keys`` (count), ``sa_impersonators`` (list).
 """
 
@@ -34,6 +34,13 @@ def analyze_key_hygiene(policy: dict[str, Any]) -> dict[str, Any]:
     issues: list[str] = []
     if dek_source == "env":
         issues.append("the DEK is supplied via host env (the untrusted host hands over the key)")
+    elif dek_source != "kbs":
+        # Only an attestation-gated KBS release counts; file, metadata, host, or an
+        # undeclared source can hand over the key without attestation.
+        issues.append(
+            f"the DEK source is '{dek_source or 'undeclared'}', not an attestation-gated "
+            "KBS (the key can be obtained without attestation)"
+        )
     if not rotation:
         issues.append("no key rotation configured (a stolen long-lived DEK decrypts forever)")
     if sa_keys > 0:
