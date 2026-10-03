@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ..checks.base import Check, Finding, Target
-from .base import Platform
+from .base import Platform, canonical_platform
 
 
 def _nitro_checks() -> list[type[Check]]:
@@ -22,14 +22,14 @@ def _nitro_demo() -> tuple[Target, list[Finding]]:
     return run_demo()
 
 
-def _sevsnp_checks() -> list[type[Check]]:
-    from .sevsnp import SEVSNP_CHECKS
-    return SEVSNP_CHECKS
+def _gcp_cspace_checks() -> list[type[Check]]:
+    from .gcp_cspace import GCP_CSPACE_CHECKS
+    return GCP_CSPACE_CHECKS
 
 
-def _sevsnp_demo() -> tuple[Target, list[Finding]]:
-    from .sevsnp.demo import run_sevsnp_demo
-    return run_sevsnp_demo()
+def _gcp_cspace_demo() -> tuple[Target, list[Finding]]:
+    from .gcp_cspace.demo import run_gcp_cspace_demo
+    return run_gcp_cspace_demo()
 
 
 def _gpucc_checks() -> list[type[Check]]:
@@ -42,14 +42,25 @@ def _gpucc_demo() -> tuple[Target, list[Finding]]:
     return run_gpucc_demo()
 
 
+def _host_checks() -> list[type[Check]]:
+    from .host import HOST_CHECKS
+    return HOST_CHECKS
+
+
+def _host_demo() -> tuple[Target, list[Finding]]:
+    from .host.demo import run_host_demo
+    return run_host_demo()
+
+
 # platform -> (lazy check-list loader, lazy demo loader)
 _ChecksLoader = Callable[[], list[type[Check]]]
 _DemoLoader = Callable[[], tuple[Target, list[Finding]]]
 
 _REGISTRY: dict[str, tuple[_ChecksLoader, _DemoLoader]] = {
     Platform.NITRO.value: (_nitro_checks, _nitro_demo),
-    Platform.SEV_SNP.value: (_sevsnp_checks, _sevsnp_demo),
+    Platform.GCP_CSPACE.value: (_gcp_cspace_checks, _gcp_cspace_demo),
     Platform.GPU_CC.value: (_gpucc_checks, _gpucc_demo),
+    Platform.HOST.value: (_host_checks, _host_demo),
     # Platform.TDX.value: (_tdx_checks, _tdx_demo),  # future
 }
 
@@ -59,6 +70,7 @@ def supported_platforms() -> list[str]:
 
 
 def checks_for(platform: str) -> list[type[Check]]:
+    platform = canonical_platform(platform)
     if platform not in _REGISTRY:
         raise ValueError(
             f"Unknown platform '{platform}'. Supported: {', '.join(supported_platforms())}"
@@ -67,6 +79,7 @@ def checks_for(platform: str) -> list[type[Check]]:
 
 
 def demo_for(platform: str) -> tuple[Target, list[Finding]]:
+    platform = canonical_platform(platform)
     if platform not in _REGISTRY:
         raise ValueError(
             f"Unknown platform '{platform}'. Supported: {', '.join(supported_platforms())}"

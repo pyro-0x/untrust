@@ -79,7 +79,7 @@ explicitly:
   multi-GPU binding dimension that is **not yet modeled** — single-GPU scope for now.
 
 Each check splits into a pure `analyze_*()` function (unit-tested, no I/O) and a
-thin live-fetch wrapper, mirroring how the Nitro and sev-snp checks separate
+thin live-fetch wrapper, mirroring how the Nitro and gcp-cspace checks separate
 logic from the SDK/host call.
 
 ## Usage

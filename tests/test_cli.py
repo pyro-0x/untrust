@@ -123,7 +123,7 @@ def test_read_only_skips_bucket_probes_on_every_platform() -> None:
     for args, probe in (
         (["--platform", "gpu-cc", "--gpu-cc-mode", "on",
           "--gpu-model-bucket", "weights"], "GPUCC-MODEL-01"),
-        (["--platform", "sev-snp", "--gcs-bucket", "state"], "GCS-BOOT-02"),
+        (["--platform", "gcp-cspace", "--gcs-bucket", "state"], "GCS-BOOT-02"),
     ):
         result = CliRunner().invoke(cli, ["scan", *args, "--read-only"])
         assert "READ-ONLY MODE" in result.output

@@ -1,4 +1,4 @@
-"""Tests for the sev-snp / Confidential Space platform checks."""
+"""Tests for the gcp-cspace (GCP Confidential Space) platform checks."""
 
 from __future__ import annotations
 
@@ -7,25 +7,25 @@ import json
 
 from untrust.checks.base import Status, Target
 from untrust.platforms import checks_for, demo_for, supported_platforms
-from untrust.platforms.sevsnp.attestation import (
+from untrust.platforms.gcp_cspace.attestation import (
     ConfidentialSpaceAttestationCheck,
     analyze_token_claims,
 )
-from untrust.platforms.sevsnp.gcs_bootstrap import analyze_gcs_bucket
-from untrust.platforms.sevsnp.keybind import (
+from untrust.platforms.gcp_cspace.gcs_bootstrap import analyze_gcs_bucket
+from untrust.platforms.gcp_cspace.keybind import (
     ConfidentialSpaceKeyReleaseCheck,
     analyze_wif_condition,
 )
-from untrust.platforms.sevsnp.kms_binding import analyze_kms_bindings
-from untrust.platforms.sevsnp.vm_config import analyze_instance_config
+from untrust.platforms.gcp_cspace.kms_binding import analyze_kms_bindings
+from untrust.platforms.gcp_cspace.vm_config import analyze_instance_config
 
 # --- registry ---------------------------------------------------------------
 
 
 def test_registry_exposes_platforms() -> None:
     assert "nitro" in supported_platforms()
-    assert "sev-snp" in supported_platforms()
-    assert len(checks_for("sev-snp")) == 11
+    assert "gcp-cspace" in supported_platforms()
+    assert len(checks_for("gcp-cspace")) == 11
 
 
 def test_nitro_registry_unchanged() -> None:
@@ -82,7 +82,7 @@ def test_wif_condition_fully_bound_passes() -> None:
 
 
 def test_keybind_check_skips_without_provider() -> None:
-    f = ConfidentialSpaceKeyReleaseCheck().run(Target(platform="sev-snp"))
+    f = ConfidentialSpaceKeyReleaseCheck().run(Target(platform="gcp-cspace"))
     assert f.status == Status.SKIP
 
 
@@ -136,7 +136,7 @@ def test_attestation_check_decodes_jwt(tmp_path) -> None:
     token_file.write_text(token)
 
     f = ConfidentialSpaceAttestationCheck().run(
-        Target(platform="sev-snp", attestation_token=str(token_file))
+        Target(platform="gcp-cspace", attestation_token=str(token_file))
     )
     assert f.status == Status.FAIL
 
@@ -265,9 +265,9 @@ def test_vm_plain_sev_is_not_snp() -> None:
 # --- demo -------------------------------------------------------------------
 
 
-def test_sevsnp_demo_returns_findings() -> None:
-    target, findings = demo_for("sev-snp")
-    assert target.platform == "sev-snp"
+def test_gcp_cspace_demo_returns_findings() -> None:
+    target, findings = demo_for("gcp-cspace")
+    assert target.platform == "gcp-cspace"
     assert {f.check_id for f in findings} == {
         "CSPACE-KEYBIND-01",
         "CSPACE-KMS-01",
@@ -288,7 +288,7 @@ def test_sevsnp_demo_returns_findings() -> None:
 
 
 def test_metadata_writers_flag_workload_sa_and_public() -> None:
-    from untrust.platforms.sevsnp.metadata_mutability import analyze_metadata_writers
+    from untrust.platforms.gcp_cspace.metadata_mutability import analyze_metadata_writers
 
     sa = "wl@p.iam.gserviceaccount.com"
     v = analyze_metadata_writers(
@@ -304,7 +304,7 @@ def test_metadata_writers_flag_workload_sa_and_public() -> None:
 
 
 def test_metadata_writers_pass_when_admin_only() -> None:
-    from untrust.platforms.sevsnp.metadata_mutability import analyze_metadata_writers
+    from untrust.platforms.gcp_cspace.metadata_mutability import analyze_metadata_writers
 
     v = analyze_metadata_writers(
         [{"role": "roles/compute.instanceAdmin.v1", "members": ["group:sre@corp"]}],
@@ -314,7 +314,7 @@ def test_metadata_writers_pass_when_admin_only() -> None:
 
 
 def test_sa_impersonation_and_keys() -> None:
-    from untrust.platforms.sevsnp.sa_identity import (
+    from untrust.platforms.gcp_cspace.sa_identity import (
         analyze_sa_impersonation,
         analyze_sa_keys,
     )
@@ -333,7 +333,7 @@ def test_sa_impersonation_and_keys() -> None:
 
 
 def test_wif_siblings_flag_weak_provider() -> None:
-    from untrust.platforms.sevsnp.wif_siblings import analyze_providers
+    from untrust.platforms.gcp_cspace.wif_siblings import analyze_providers
 
     v = analyze_providers(
         [
@@ -358,7 +358,7 @@ def test_wif_siblings_flag_weak_provider() -> None:
 
 
 def test_image_signing_flags_unsigned_and_tag() -> None:
-    from untrust.platforms.sevsnp.image_signing import analyze_image_signing
+    from untrust.platforms.gcp_cspace.image_signing import analyze_image_signing
 
     v = analyze_image_signing(
         [{"key": "tee-image-reference", "value": "us-docker.pkg.dev/p/r/img:latest"}],
@@ -371,7 +371,7 @@ def test_image_signing_flags_unsigned_and_tag() -> None:
 
 
 def test_image_signing_passes_when_hardened() -> None:
-    from untrust.platforms.sevsnp.image_signing import analyze_image_signing
+    from untrust.platforms.gcp_cspace.image_signing import analyze_image_signing
 
     v = analyze_image_signing(
         [
@@ -381,3 +381,18 @@ def test_image_signing_passes_when_hardened() -> None:
         [{"role": "roles/artifactregistry.writer", "members": ["group:ci@corp"]}],
     )
     assert v["passed"] is True
+
+
+def test_old_sev_snp_name_is_an_alias() -> None:
+    from click.testing import CliRunner
+
+    from untrust.cli import cli
+
+    assert "sev-snp" not in supported_platforms()
+    assert checks_for("sev-snp") == checks_for("gcp-cspace")
+    assert demo_for("sev-snp")[0].platform == "gcp-cspace"
+
+    result = CliRunner().invoke(cli, ["list-checks", "--platform", "sev-snp"])
+    assert result.exit_code == 0
+    assert "Platform: gcp-cspace" in result.output
+    assert "now --platform gcp-cspace" in result.output

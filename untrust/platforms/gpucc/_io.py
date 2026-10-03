@@ -4,7 +4,7 @@ The GPU-CC checks consume two kinds of captured evidence as JSON files: the
 NVIDIA attestation report and the relying-party verifier / key-release policy.
 There is no single universal schema; each check's docstring names the exact
 fields untrust reads, and a real integration maps its report/policy onto that
-shape (the file-based analog of how ``sevsnp`` consumes a captured token).
+shape (the file-based analog of how ``gcp_cspace`` consumes a captured token).
 """
 
 from __future__ import annotations

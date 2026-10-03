@@ -64,18 +64,29 @@ untrust scan --demo
 
 ```bash
 # Demo — no GCP credentials needed
-untrust scan --platform sev-snp --demo
+untrust scan --platform gcp-cspace --demo
 
 # List the SEV-SNP / Confidential Space checks
-untrust list-checks --platform sev-snp
+untrust list-checks --platform gcp-cspace
 
 # Live scan against a Confidential Space deployment (uses Application Default Credentials)
-untrust scan --platform sev-snp \
+untrust scan --platform gcp-cspace \
   --wip-provider projects/PROJECT/locations/global/workloadIdentityPools/POOL/providers/PROVIDER \
   --gcp-kms-key projects/PROJECT/locations/global/keyRings/RING/cryptoKeys/KEY \
   --gcs-bucket my-bootstrap-state \
   --gcp-instance my-cs-vm --gcp-zone us-central1-a \
   --output report.json
+```
+
+### Host attestation (SEV-SNP report / TPM2 quote)
+
+```bash
+# Demo: a correctly signed SNP report that fails every other control
+untrust scan --platform host --demo
+
+# Verify captured evidence offline against a pinned baseline and the nonce you issued
+untrust scan --platform host \
+  --host-evidence evidence.json --host-baseline baseline.json --host-nonce NONCE_HEX
 ```
 
 Any single target flag is enough; checks whose inputs are absent report `SKIP`.
@@ -208,9 +219,22 @@ The bootstrap-state trust boundary is backend-agnostic — attestation covers no
 |-------|-----------------|-----------------|
 | **CLOUDTRAIL-01** | Is a trail logging management events (KMS `Decrypt`) and S3 data events for the state bucket? | Live KMS interception and state tampering leave no audit trail |
 
+### Host attestation (SEV-SNP / TPM2) — 6 checks
+
+The other platforms audit the deployment around a TEE. `--platform host` checks the attestation evidence itself, offline, the way a relying party has to before it trusts a host. It takes a raw SEV-SNP report with its VCEK/ASK/ARK chain, or a TPM2 quote with its AK chain, PCR values, and event log. Every verdict depends on the signature check, which depends on a chain to a root pinned in the baseline. Full detail lives in [`untrust/platforms/host/README.md`](untrust/platforms/host/README.md).
+
+| Check | What it verifies | Failure enables |
+|-------|-----------------|-----------------|
+| **HOST-CHAIN-01** | VCEK/VLEK→ASK→ARK or AK→CA chain verifies, and the root matches a pinned fingerprint | Evidence signed under an attacker's self-made root |
+| **HOST-SIG-01** | Report or quote signature verifies with the certified key; no unsigned reports, no SHA-1 quotes | Fabricated evidence |
+| **HOST-NONCE-01** | `REPORT_DATA` or the quote's `extraData` carries the verifier's nonce | Replay of an old, good report |
+| **HOST-DEBUG-01** | SNP DEBUG and MIGRATE_MA policy bits are clear; TPM event log shows Secure Boot on, bound to a quoted PCR 7 | Host can read guest memory, or boot unsigned code |
+| **HOST-TCB-01** | Reported SNP TCB (bootloader/TEE/SNP/microcode) meets the floor and matches the VCEK; TPM firmware meets the floor | Firmware rollback to known-vulnerable versions |
+| **HOST-MEAS-01** | Launch measurement or PCRs match golden values; the PCRs hash to the quote and the event log replays to them | An unapproved image or boot chain |
+
 ### GCP Confidential Space (SEV-SNP) — 11 checks
 
-The same thesis on GCP: attestation proves the code, not what you hand it at boot, nor who you let ask for the keys. On Confidential Space a workload proves itself with an attestation token and exchanges it — through Workload Identity Federation (WIF) — for Cloud KMS access. Run `untrust list-checks --platform sev-snp`; full detail lives in [`untrust/platforms/sevsnp/README.md`](untrust/platforms/sevsnp/README.md).
+The same thesis on GCP: attestation proves the code, not what you hand it at boot, nor who you let ask for the keys. On Confidential Space a workload proves itself with an attestation token and exchanges it — through Workload Identity Federation (WIF) — for Cloud KMS access. Run `untrust list-checks --platform gcp-cspace`; full detail lives in [`untrust/platforms/gcp_cspace/README.md`](untrust/platforms/gcp_cspace/README.md).
 
 | Check | What it verifies | Failure enables |
 |-------|-----------------|-----------------|
@@ -288,10 +312,16 @@ untrust scan --demo --json
 untrust list-checks
 
 # --- GCP Confidential Space (SEV-SNP) ---
-untrust scan --platform sev-snp --demo
-untrust scan --platform sev-snp --wip-provider PROVIDER --gcs-bucket BUCKET \
+untrust scan --platform gcp-cspace --demo
+untrust scan --platform gcp-cspace --wip-provider PROVIDER --gcs-bucket BUCKET \
   --gcp-instance VM --gcp-zone ZONE --gcp-kms-key KEY
-untrust list-checks --platform sev-snp
+untrust list-checks --platform gcp-cspace
+
+# --- Host attestation (SEV-SNP report / TPM2 quote) ---
+untrust scan --platform host --demo
+untrust scan --platform host --host-evidence evidence.json \
+  --host-baseline baseline.json --host-nonce NONCE_HEX
+untrust list-checks --platform host
 
 # --- NVIDIA GPU Confidential Computing ---
 untrust scan --platform gpu-cc --demo
@@ -346,7 +376,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
-For AWS Nitro, `untrust` uses the AWS SDK (boto3) and SSM to inspect the target deployment; for GCP Confidential Space (`--platform sev-snp`) it uses the Google API client libraries (Compute, IAM, Cloud KMS, Storage) with your Application Default Credentials; for NVIDIA GPU CC (`--platform gpu-cc`) it reads captured attestation evidence and policy files, plus the model-weights bucket on Cloud Storage. Each check separates a pure `analyze_*()` function from a thin live-fetch wrapper. The AWS Nitro platform combines several families of checks (run `untrust list-checks` for the full set of 33):
+For AWS Nitro, `untrust` uses the AWS SDK (boto3) and SSM to inspect the target deployment; for GCP Confidential Space (`--platform gcp-cspace`) it uses the Google API client libraries (Compute, IAM, Cloud KMS, Storage) with your Application Default Credentials; for NVIDIA GPU CC (`--platform gpu-cc`) it reads captured attestation evidence and policy files, plus the model-weights bucket on Cloud Storage; for host attestation (`--platform host`) it verifies a captured SEV-SNP report or TPM2 quote offline against a pinned baseline. Each check separates a pure `analyze_*()` function from a thin live-fetch wrapper. The AWS Nitro platform combines several families of checks (run `untrust list-checks` for the full set of 33):
 
 - **Cloud-API checks** read S3, KMS, EC2, IAM, and CloudTrail configuration directly — e.g. `KMS-01` performs semantic key-policy evaluation (rejecting all-zeros and identity-only PCR conditions), `ROLLBACK-01` reads S3 Object Lock, `S3-02` reads bucket encryption and the TLS-only policy, and `CLOUDTRAIL-01` confirms KMS/S3 activity is actually logged.
 - **Alternative-backend checks** apply the same storage-plane controls to non-S3 state stores when targeted: DynamoDB (`DDB-01`), Secrets Manager (`SECRETS-01`), SSM Parameter Store (`SSM-01`), EFS/EBS (`EFS-01`), and RDS/Aurora (`RDS-01`). Each checks for a customer-managed CMK (so `KMS-01` attestation can gate it), least-privilege/non-public access, anti-rollback, and audit coverage. CMK status is resolved authoritatively via `kms:DescribeKey` (`KeyMetadata.KeyManager`) — a string check cannot distinguish an AWS-managed service key from a customer CMK, since both surface as a resolved key ARN.

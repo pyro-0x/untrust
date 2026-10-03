@@ -14,7 +14,19 @@ except ImportError:
 
 from . import __version__
 from .checks.base import Target
+from .platforms.base import PLATFORM_ALIASES, canonical_platform
 from .platforms.registry import supported_platforms
+
+
+def _platform(ctx: click.Context, param: click.Parameter, value: str) -> str:
+    """Resolve a renamed platform to its current name, with a one-line notice."""
+    name = canonical_platform(value)
+    if name != value:
+        click.echo(f"Note: --platform {value} is now --platform {name}.", err=True)
+    return name
+
+
+PLATFORM_CHOICES = click.Choice(supported_platforms() + list(PLATFORM_ALIASES))
 
 
 @click.group()
@@ -26,7 +38,7 @@ def cli() -> None:
 @cli.command()
 @click.option(
     "--platform", "platform", default="nitro",
-    type=click.Choice(supported_platforms()),
+    type=PLATFORM_CHOICES, callback=_platform,
     help="TEE platform to audit (default: nitro).",
 )
 # --- AWS Nitro target ---
@@ -56,15 +68,15 @@ def cli() -> None:
     help="[nitro] RDS/Aurora DB instance identifier holding enclave state.",
 )
 # --- GCP Confidential Space / SEV-SNP target ---
-@click.option("--gcp-project", help="[sev-snp] GCP project ID.")
-@click.option("--wip-provider", help="[sev-snp] WIF provider resource gating key release.")
-@click.option("--gcp-kms-key", help="[sev-snp] Cloud KMS key resource to audit IAM on.")
-@click.option("--gcs-bucket", help="[sev-snp] GCS bucket holding bootstrap state.")
-@click.option("--gcp-instance", help="[sev-snp] Confidential VM instance name.")
-@click.option("--gcp-zone", help="[sev-snp] Zone of the Confidential VM.")
+@click.option("--gcp-project", help="[gcp-cspace] GCP project ID.")
+@click.option("--wip-provider", help="[gcp-cspace] WIF provider resource gating key release.")
+@click.option("--gcp-kms-key", help="[gcp-cspace] Cloud KMS key resource to audit IAM on.")
+@click.option("--gcs-bucket", help="[gcp-cspace] GCS bucket holding bootstrap state.")
+@click.option("--gcp-instance", help="[gcp-cspace] Confidential VM instance name.")
+@click.option("--gcp-zone", help="[gcp-cspace] Zone of the Confidential VM.")
 @click.option(
     "--attestation-token", type=click.Path(),
-    help="[sev-snp] Path to a captured Confidential Space attestation token (JWT).",
+    help="[gcp-cspace] Path to a captured Confidential Space attestation token (JWT).",
 )
 # --- NVIDIA GPU Confidential Computing target ---
 @click.option(
@@ -90,6 +102,19 @@ def cli() -> None:
 @click.option(
     "--gpu-launch-config", type=click.Path(),
     help="[gpu-cc] Path to the CVM/GPU launch config (JSON) for the launch-mutability check.",
+)
+# --- Host attestation target ---
+@click.option(
+    "--host-evidence", type=click.Path(),
+    help="[host] Evidence manifest JSON: SEV-SNP report or TPM2 quote, cert chain, PCRs.",
+)
+@click.option(
+    "--host-baseline", type=click.Path(),
+    help="[host] Baseline JSON: pinned roots, golden measurements/PCRs, TCB floor.",
+)
+@click.option(
+    "--host-nonce",
+    help="[host] Hex nonce the verifier issued; must appear in the report/quote.",
 )
 @click.option("--output", "output_path", type=click.Path(), help="Write JSON report to this path.")
 @click.option("--json", "json_output", is_flag=True, help="Print JSON output to stdout.")
@@ -129,6 +154,9 @@ def scan(
     gpu_kbs_policy: str | None,
     gpu_model_bucket: str | None,
     gpu_launch_config: str | None,
+    host_evidence: str | None,
+    host_baseline: str | None,
+    host_nonce: str | None,
     output_path: str | None,
     json_output: bool,
     read_only: bool,
@@ -179,7 +207,16 @@ def scan(
             "--gpu-attestation-report, --gpu-verifier-policy, --gpu-cc-mode, "
             "--gpu-kbs-policy, --gpu-model-bucket, or --gpu-launch-config"
         )
-    else:  # sev-snp (and future platforms)
+    elif platform == "host":
+        identifiers = [host_evidence]
+        id_hint = "--host-evidence"
+        if host_nonce:
+            try:
+                bytes.fromhex(host_nonce)
+            except ValueError:
+                click.echo("Error: --host-nonce must be hex.", err=True)
+                sys.exit(1)
+    else:  # gcp-cspace (and future platforms)
         identifiers = [wip_provider, gcp_kms_key, gcs_bucket, gcp_instance, attestation_token]
         id_hint = (
             "--wip-provider, --gcp-kms-key, --gcs-bucket, --gcp-instance, "
@@ -218,6 +255,9 @@ def scan(
         gpu_kbs_policy=gpu_kbs_policy,
         gpu_model_bucket=gpu_model_bucket,
         gpu_launch_config=gpu_launch_config,
+        host_evidence=host_evidence,
+        host_baseline=host_baseline,
+        host_nonce=host_nonce,
     )
 
     if read_only:
@@ -251,7 +291,7 @@ def scan(
 @cli.command(name="list-checks")
 @click.option(
     "--platform", "platform", default="nitro",
-    type=click.Choice(supported_platforms()),
+    type=PLATFORM_CHOICES, callback=_platform,
     help="TEE platform whose checks to list (default: nitro).",
 )
 def list_checks(platform: str) -> None:
@@ -273,7 +313,7 @@ def list_checks(platform: str) -> None:
                 f"{c.check_id:<19}{c.severity.value:<10}{boundary:<13}{assurance:<19}{c.title}"
             )
         click.echo(
-            "\nassurance: report-derived (trust gated on GPUCC-SIGVERIFY-01) · "
+            "\nassurance: report-derived (trust gated on the evidence signature check) · "
             "probed (actively tested) · operator-declared (a policy says so)."
         )
     else:

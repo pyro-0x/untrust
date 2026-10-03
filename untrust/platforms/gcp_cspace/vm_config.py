@@ -7,7 +7,7 @@ hardware/boot posture the whole SEV-SNP story depends on:
 
   * confidentialInstanceConfig.enableConfidentialCompute == true
   * confidentialInstanceType == 'SEV_SNP' (plain 'SEV' lacks the SNP report;
-    'TDX' is the wrong platform for a sev-snp audit)
+    'TDX' is the wrong platform for a gcp-cspace audit)
   * shieldedInstanceConfig: Secure Boot, vTPM, and integrity monitoring on
 """
 

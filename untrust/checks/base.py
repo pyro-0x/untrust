@@ -87,7 +87,7 @@ class Target:
     alternative state stores in addition to (or instead of) an S3 bucket;
     checks that target a backend skip when its field is unset. The ``gcp_*``
     fields describe an AMD SEV-SNP workload running on GCP Confidential Space
-    and are only read by the sev-snp platform checks.
+    and are only read by the gcp-cspace platform checks.
     """
     # --- AWS Nitro (default platform) ---
     bucket: str | None = None
@@ -102,7 +102,7 @@ class Target:
     db_instance: str | None = None
 
     # --- Platform selector ---
-    platform: str = "nitro"  # one of: nitro | sev-snp | tdx
+    platform: str = "nitro"  # one of: nitro | gcp-cspace | gpu-cc | host
 
     # --- GCP Confidential Space / SEV-SNP ---
     gcp_project: str | None = None
@@ -133,6 +133,16 @@ class Target:
     gpu_model_bucket: str | None = None
     # Path to the CVM/GPU launch config (JSON) for the launch-mutability check.
     gpu_launch_config: str | None = None
+
+    # --- Host attestation (SEV-SNP report / TPM2 quote) ---
+    # Path to an evidence manifest (JSON) naming the report or quote, its cert
+    # chain, and for TPM2 the PCR values and event log.
+    host_evidence: str | None = None
+    # Path to the pinned baseline (JSON): trusted roots, golden measurements/PCRs,
+    # and the TCB / firmware floor.
+    host_baseline: str | None = None
+    # Hex nonce the verifier issued; must appear in REPORT_DATA / extraData.
+    host_nonce: str | None = None
 
 
 class Check:
