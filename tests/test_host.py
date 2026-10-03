@@ -475,3 +475,92 @@ def test_snp_optional_policy_pins() -> None:
     assert any("minimum ABI 0.0 is below 1.51" in i for i in issues)
     assert any("allows SMT" in i for i in issues)
     assert any("single socket" in i for i in issues)
+
+
+# --- Third review: boolean switches are strict; verify() never raises -------
+
+
+@pytest.mark.parametrize(("section", "make", "key", "bad"), [
+    ("sev-snp", synth.snp_fixture, "allow_smt", "false"),
+    ("sev-snp", synth.snp_fixture, "allow_debug", "true"),
+    ("sev-snp", synth.snp_fixture, "allow_migration_agent", 1),
+    ("sev-snp", synth.snp_fixture, "require_single_socket", ""),
+    ("tpm2", synth.tpm_fixture, "require_clock_safe", 0),
+    ("tpm2", synth.tpm_fixture, "require_secure_boot", "no"),
+    ("tpm2", synth.tpm_fixture, "require_ak_eku", None),
+])
+def test_non_boolean_switch_denies(section, make, key, bad) -> None:  # type: ignore[no-untyped-def]
+    fx = make()
+    fx.baseline[section][key] = bad
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert not verdict.allowed
+    assert any("must be true or false" in i
+               for c in verdict.controls.values() for i in c.issues)
+
+
+def test_verify_survives_evidence_without_a_type() -> None:
+    class Broken:
+        certs: list[object] = []
+
+    verdict = verify(Broken(), {}, synth.NONCE)  # type: ignore[arg-type]
+    assert verdict.evidence_type == "unknown"
+    assert not verdict.allowed
+
+
+def test_flag_reader_defaults_and_explicit_values() -> None:
+    from untrust.platforms.host.policy import flag
+
+    assert flag({}, "allow_smt") is True
+    assert flag({}, "allow_debug") is False
+    assert flag({"allow_smt": False}, "allow_smt") is False
+    assert flag({"allow_debug": True}, "allow_debug") is True
+    with pytest.raises(ValueError):
+        flag({"allow_debug": None}, "allow_debug")
+    with pytest.raises(KeyError):
+        flag({}, "allow_anything")
+
+
+def test_bad_secure_boot_switch_denies_without_an_event_log() -> None:
+    fx = synth.tpm_fixture()
+    fx.evidence.event_log = None
+    fx.baseline["tpm2"]["require_secure_boot"] = "no"
+    assert not verify(fx.evidence, fx.baseline, fx.nonce).allowed
+
+
+def test_all_bad_switches_reported_in_one_error() -> None:
+    fx = synth.snp_fixture()
+    fx.baseline["sev-snp"].update(allow_debug="x", allow_smt=0)
+    issue = verify(fx.evidence, fx.baseline, fx.nonce).controls["chain"].issues[0]
+    assert "'allow_debug' ('x')" in issue and "'allow_smt' (0)" in issue
+
+
+def test_error_handler_survives_a_raising_type_property() -> None:
+    class Hostile:
+        @property
+        def type(self) -> str:
+            raise RuntimeError("no type")
+
+    verdict = verify(Hostile(), {}, synth.NONCE)  # type: ignore[arg-type]
+    assert verdict.evidence_type == "unknown" and not verdict.allowed
+
+
+def test_every_flag_call_site_uses_a_registered_switch() -> None:
+    # Guards against drift between SWITCHES and the controls that read them.
+    import re
+    from pathlib import Path
+
+    from untrust.platforms.host import policy
+
+    source = "".join(p.read_text() for p in Path(policy.__file__).parent.glob("*.py")
+                     if p.name != "policy.py")
+    used = set(re.findall(r'flag\(\w+, "(\w+)"\)', source))
+    registered = {k for switches in policy.SWITCHES.values() for k in switches}
+    assert used == registered
+
+
+def test_non_object_baseline_section_denies() -> None:
+    fx = synth.snp_fixture()
+    fx.baseline["sev-snp"] = False
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert not verdict.allowed
+    assert "must be an object" in verdict.controls["chain"].issues[0]
