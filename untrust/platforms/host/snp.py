@@ -27,6 +27,7 @@ SIG_ALGO_ECDSA_P384_SHA384 = 1
 
 # Guest policy bits.
 POLICY_SMT = 1 << 16
+POLICY_SINGLE_SOCKET = 1 << 20
 POLICY_MIGRATE_MA = 1 << 18
 POLICY_DEBUG = 1 << 19
 
@@ -237,11 +238,26 @@ def check_debug(report: SnpReport, baseline: dict[str, Any]) -> dict[str, Any]:
     max_vmpl = baseline.get("max_vmpl")
     if max_vmpl is not None and report.vmpl > int(max_vmpl):
         issues.append(f"report requested at VMPL{report.vmpl}, above VMPL{max_vmpl}")
+    # Optional pins on the rest of the guest policy.
+    abi = ((report.policy >> 8) & 0xFF, report.policy & 0xFF)
+    min_abi = baseline.get("min_policy_abi")
+    if min_abi is not None and abi < (int(min_abi["major"]), int(min_abi["minor"])):
+        issues.append(f"guest policy minimum ABI {abi[0]}.{abi[1]} is below "
+                      f"{min_abi['major']}.{min_abi['minor']}")
+    smt = bool(report.policy & POLICY_SMT)
+    if smt and not baseline.get("allow_smt", True):
+        issues.append("guest policy allows SMT, which the baseline forbids")
+    single_socket = bool(report.policy & POLICY_SINGLE_SOCKET)
+    if baseline.get("require_single_socket", False) and not single_socket:
+        issues.append("guest policy does not require a single socket")
     return {
         "policy": hex(report.policy),
         "debug": report.debug,
         "migrate_ma": report.migrate_ma,
         "vmpl": report.vmpl,
+        "policy_abi": f"{abi[0]}.{abi[1]}",
+        "smt": smt,
+        "single_socket": single_socket,
         "issues": issues,
         "passed": not issues,
     }

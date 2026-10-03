@@ -125,8 +125,17 @@ def verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None = N
     """Verify host evidence against the baseline section for its type.
 
     Every control is always evaluated, so one report shows every gap at once;
-    ``HostVerdict.allowed`` is the fail-closed decision.
+    ``HostVerdict.allowed`` is the fail-closed decision. This never raises: any
+    unexpected error becomes a deny, so a long-running gate cannot crash open.
     """
+    try:
+        return _verify(evidence, baseline, nonce, now)
+    except Exception as e:  # fail closed on anything
+        return _failed(evidence.type, f"verification error: {type(e).__name__}: {e}")
+
+
+def _verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None,
+            now: datetime | None) -> HostVerdict:
     policy = baseline.get(evidence.type) or {}
     if not evidence.certs:
         return _failed(evidence.type, "evidence carries no signing certificate chain")
@@ -155,7 +164,8 @@ def verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None = N
             return _failed(evidence.type, f"could not parse TPM evidence: {e}")
         evaluate = lambda: {  # noqa: E731
             "chain": chain,
-            "signature": tpm.verify_quote_signature(quote, sig, signer),
+            "signature": tpm.verify_quote_signature(
+                quote, sig, signer, require_ak_eku=policy.get("require_ak_eku", True)),
             "nonce": tpm.check_nonce(quote, nonce),
             "debug": tpm.check_secure_boot(quote, evidence.pcrs, log, policy),
             "tcb": tpm.check_tcb(quote, policy),
@@ -163,7 +173,7 @@ def verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None = N
         }
     try:
         results = evaluate()
-    except (ValueError, TypeError, AttributeError) as e:
+    except (ValueError, TypeError, AttributeError, KeyError, OverflowError) as e:
         # A malformed baseline (bad hex, non-numeric floor) must deny, not crash.
         return _failed(evidence.type, f"invalid baseline or evidence values: {e}")
     return HostVerdict(evidence.type, {n: _control(n, results[n]) for n in CONTROLS})
