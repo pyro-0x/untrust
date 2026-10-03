@@ -102,7 +102,7 @@ class Target:
     db_instance: str | None = None
 
     # --- Platform selector ---
-    platform: str = "nitro"  # one of: nitro | gcp-cspace | gpu-cc | host
+    platform: str = "nitro"  # one of: nitro | gcp-cspace | gpu-cc | host | azure-cvm
 
     # --- GCP Confidential Space / SEV-SNP ---
     gcp_project: str | None = None
@@ -133,6 +133,17 @@ class Target:
     gpu_model_bucket: str | None = None
     # Path to the CVM/GPU launch config (JSON) for the launch-mutability check.
     gpu_launch_config: str | None = None
+
+    # --- Azure confidential VM (azure-cvm) ---
+    azure_subscription: str | None = None  # subscription ID
+    azure_resource_group: str | None = None
+    azure_vm: str | None = None  # confidential VM name
+    azure_key_vault: str | None = None  # vault name or host holding the SKR key
+    azure_key: str | None = None  # key whose release policy gates the workload's secret
+    # MAA provider name (in the resource group) or full resource ID, for AZ-MAA-01.
+    azure_attestation_provider: str | None = None
+    # Path to an MAA token captured inside the VM, for AZ-DBG-01.
+    azure_attestation_token: str | None = None
 
     # --- Host attestation (SEV-SNP report / TPM2 quote) ---
     # Path to an evidence manifest (JSON) naming the report or quote, its cert

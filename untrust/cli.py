@@ -116,6 +116,20 @@ def cli() -> None:
     "--host-nonce",
     help="[host] Hex nonce the verifier issued; must appear in the report/quote.",
 )
+# --- Azure confidential VM target ---
+@click.option("--azure-subscription", help="[azure-cvm] Subscription ID.")
+@click.option("--azure-resource-group", help="[azure-cvm] Resource group of the VM.")
+@click.option("--azure-vm", help="[azure-cvm] Confidential VM name.")
+@click.option("--azure-key-vault", help="[azure-cvm] Key Vault (name or host) holding the SKR key.")
+@click.option("--azure-key", help="[azure-cvm] Key whose release policy gates the workload.")
+@click.option(
+    "--azure-attestation-provider",
+    help="[azure-cvm] MAA provider name (in the resource group) or resource ID.",
+)
+@click.option(
+    "--azure-attestation-token", type=click.Path(),
+    help="[azure-cvm] MAA token (JWT) captured inside the VM.",
+)
 @click.option("--output", "output_path", type=click.Path(), help="Write JSON report to this path.")
 @click.option("--json", "json_output", is_flag=True, help="Print JSON output to stdout.")
 @click.option(
@@ -157,6 +171,13 @@ def scan(
     host_evidence: str | None,
     host_baseline: str | None,
     host_nonce: str | None,
+    azure_subscription: str | None,
+    azure_resource_group: str | None,
+    azure_vm: str | None,
+    azure_key_vault: str | None,
+    azure_key: str | None,
+    azure_attestation_provider: str | None,
+    azure_attestation_token: str | None,
     output_path: str | None,
     json_output: bool,
     read_only: bool,
@@ -216,6 +237,9 @@ def scan(
             except ValueError:
                 click.echo("Error: --host-nonce must be hex.", err=True)
                 sys.exit(1)
+    elif platform == "azure-cvm":
+        identifiers = [azure_vm, azure_key, azure_attestation_token]
+        id_hint = "--azure-vm, --azure-key, or --azure-attestation-token"
     else:  # gcp-cspace (and future platforms)
         identifiers = [wip_provider, gcp_kms_key, gcs_bucket, gcp_instance, attestation_token]
         id_hint = (
@@ -258,6 +282,13 @@ def scan(
         host_evidence=host_evidence,
         host_baseline=host_baseline,
         host_nonce=host_nonce,
+        azure_subscription=azure_subscription,
+        azure_resource_group=azure_resource_group,
+        azure_vm=azure_vm,
+        azure_key_vault=azure_key_vault,
+        azure_key=azure_key,
+        azure_attestation_provider=azure_attestation_provider,
+        azure_attestation_token=azure_attestation_token,
     )
 
     if read_only:
