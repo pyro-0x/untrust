@@ -19,7 +19,8 @@ The two code-measurement bindings that matter (both must be present):
     *who* launched the workload, not *what code* is running.
 
 Recommended-but-not-gating bindings (reported as additional weaknesses):
-``swname == 'CONFIDENTIAL_SPACE'``, ``hwmodel`` bound to an AMD SEV model, and a
+``swname == 'CONFIDENTIAL_SPACE'``, ``hwmodel`` bound to the TEE (``GCP_AMD_SEV`` or
+``GCP_INTEL_TDX``), and a
 ``support_attributes`` constraint that keeps USABLE (debug-tooling) images out.
 """
 
@@ -51,7 +52,7 @@ def analyze_wif_condition(condition: str | None) -> dict[str, Any]:
         "image_digest_present_only": mentions_image_digest and not pins_image_digest,
         # recommended bindings
         "binds_swname": ("swname" in t) and ("confidential_space" in t),
-        "binds_hwmodel_sev": ("hwmodel" in t) and ("sev" in t),
+        "binds_hwmodel": ("hwmodel" in t) and ("gcp_amd_sev" in t or "gcp_intel_tdx" in t),
         "constrains_support_attributes": ("support_attributes" in t) and ("stable" in t),
     }
 
@@ -80,8 +81,10 @@ def analyze_wif_condition(condition: str | None) -> dict[str, Any]:
         )
     if not result["binds_swname"]:
         recommended_weaknesses.append("does not assert swname == 'CONFIDENTIAL_SPACE'")
-    if not result["binds_hwmodel_sev"]:
-        recommended_weaknesses.append("does not bind hwmodel to an AMD SEV model")
+    if not result["binds_hwmodel"]:
+        recommended_weaknesses.append(
+            "does not bind hwmodel to the TEE (GCP_AMD_SEV or GCP_INTEL_TDX)"
+        )
 
     result["gating_weaknesses"] = gating_weaknesses
     result["recommended_weaknesses"] = recommended_weaknesses

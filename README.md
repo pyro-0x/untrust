@@ -241,7 +241,7 @@ The same thesis on GCP: attestation proves the code, not what you hand it at boo
 | **CSPACE-KEYBIND-01** | WIF attribute condition binds key release to a **code measurement** (`dbgstat == disabled-since-boot` **and** a pinned `image_digest`), not just identity | Key release to any workload, or a debug VM |
 | **CSPACE-KMS-01** | Cloud KMS decrypt is federated only through the attested pool (`principalSet://…/workloadIdentityPools/…`), never `allUsers` or a plain service account | Attestation-ungated decrypt |
 | **GCS-BOOT-01 / -02** | Bootstrap bucket is hardened (public-access prevention, uniform access, versioning) **and** rejects injection-shaped object writes | Boot-time RCE via a planted state object |
-| **CSPACE-VM-01** | Instance is a real SEV-SNP Confidential VM with Shielded boot (Secure Boot, vTPM, integrity monitoring) | Isolation not actually in effect |
+| **CSPACE-VM-01** | Instance is a real Confidential VM with Shielded boot (Secure Boot, vTPM, integrity monitoring) on a TEE Confidential Space attests: AMD SEV or Intel TDX (SEV-SNP is rejected by Confidential Space attestation) | Isolation not actually in effect |
 | **CSPACE-ATT-01** | A captured attestation token asserts non-debug, a signed image, a production (non-USABLE) image, and AMD SEV hardware | Trust placed in an untrusted runtime state |
 | **CSPACE-META-01 · SA-01 · SAKEY-01 · WIF-02 · IMG-01** | Five **Tier-1 attestation-bypass** paths: VM metadata mutability (`tee-image-reference`), service-account impersonation, long-lived SA keys, weaker sibling WIF providers, and workload image signing | Running attacker code *as* the attested workload, or reaching keys with no attestation at all |
 
