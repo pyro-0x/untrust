@@ -23,6 +23,8 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
     encode_dss_signature,
 )
 
+from .policy import flag
+
 TPM_GENERATED_VALUE = 0xFF544347
 TPM_ST_ATTEST_QUOTE = 0x8018
 
@@ -324,7 +326,7 @@ def check_tcb(quote: Quote, baseline: dict[str, Any]) -> dict[str, Any]:
     elif quote.firmware_version < int(floor):
         issues.append(f"TPM firmware 0x{quote.firmware_version:016x} is below the "
                       f"floor 0x{int(floor):016x}")
-    if baseline.get("require_clock_safe", False) and not quote.safe:
+    if flag(baseline, "require_clock_safe", False) and not quote.safe:
         issues.append("TPM clock is not marked safe; it may have been rolled back")
     return {"firmware_version": f"0x{quote.firmware_version:016x}",
             "min_firmware_version": floor, "clock_safe": quote.safe,
@@ -339,6 +341,7 @@ def check_secure_boot(quote: Quote, pcrs: dict[str, dict[int, bytes]], log: Even
     The log's SecureBoot value only counts if the log replays to a quoted PCR 7;
     otherwise the host could hand over any log it likes.
     """
+    require = flag(baseline, "require_secure_boot", True)
     if log is None:
         return {"secure_boot": None, "issues": [], "passed": None}
     quoted = {(bank, i) for bank, idx in quote.selection for i in idx}
@@ -356,7 +359,7 @@ def check_secure_boot(quote: Quote, pcrs: dict[str, dict[int, bytes]], log: Even
     elif log.secure_boot_conflict:
         issues.append("the event log measures SecureBoot more than once with "
                       "conflicting values")
-    elif baseline.get("require_secure_boot", True) and log.secure_boot is not True:
+    elif require and log.secure_boot is not True:
         issues.append("event log shows Secure Boot disabled" if log.secure_boot is False
                       else "event log does not measure the SecureBoot variable")
     return {"secure_boot": log.secure_boot, "pcr7_bound": pcr7_bound,

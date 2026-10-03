@@ -35,6 +35,7 @@ from cryptography import x509
 
 from . import snp, tpm
 from .chain import load_certs, verify_chain
+from .policy import flag
 
 CONTROLS = ("chain", "signature", "nonce", "debug", "tcb", "measurement")
 EVIDENCE_TYPES = ("sev-snp", "tpm2")
@@ -131,7 +132,11 @@ def verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None = N
     try:
         return _verify(evidence, baseline, nonce, now)
     except Exception as e:  # fail closed on anything
-        return _failed(evidence.type, f"verification error: {type(e).__name__}: {e}")
+        # Read the type defensively: the error may come from a malformed evidence
+        # object, and the handler itself must not raise.
+        kind = getattr(evidence, "type", None)
+        return _failed(kind if isinstance(kind, str) else "unknown",
+                       f"verification error: {type(e).__name__}: {e}")
 
 
 def _verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None,
@@ -165,7 +170,7 @@ def _verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None,
         evaluate = lambda: {  # noqa: E731
             "chain": chain,
             "signature": tpm.verify_quote_signature(
-                quote, sig, signer, require_ak_eku=policy.get("require_ak_eku", True)),
+                quote, sig, signer, require_ak_eku=flag(policy, "require_ak_eku", True)),
             "nonce": tpm.check_nonce(quote, nonce),
             "debug": tpm.check_secure_boot(quote, evidence.pcrs, log, policy),
             "tcb": tpm.check_tcb(quote, policy),

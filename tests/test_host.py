@@ -475,3 +475,33 @@ def test_snp_optional_policy_pins() -> None:
     assert any("minimum ABI 0.0 is below 1.51" in i for i in issues)
     assert any("allows SMT" in i for i in issues)
     assert any("single socket" in i for i in issues)
+
+
+# --- Third review: boolean switches are strict; verify() never raises -------
+
+
+@pytest.mark.parametrize(("section", "make", "key", "bad"), [
+    ("sev-snp", synth.snp_fixture, "allow_smt", "false"),
+    ("sev-snp", synth.snp_fixture, "allow_debug", "true"),
+    ("sev-snp", synth.snp_fixture, "allow_migration_agent", 1),
+    ("sev-snp", synth.snp_fixture, "require_single_socket", ""),
+    ("tpm2", synth.tpm_fixture, "require_clock_safe", 0),
+    ("tpm2", synth.tpm_fixture, "require_secure_boot", "no"),
+    ("tpm2", synth.tpm_fixture, "require_ak_eku", None),
+])
+def test_non_boolean_switch_denies(section, make, key, bad) -> None:  # type: ignore[no-untyped-def]
+    fx = make()
+    fx.baseline[section][key] = bad
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert not verdict.allowed
+    assert any("must be true or false" in i
+               for c in verdict.controls.values() for i in c.issues)
+
+
+def test_verify_survives_evidence_without_a_type() -> None:
+    class Broken:
+        certs: list[object] = []
+
+    verdict = verify(Broken(), {}, synth.NONCE)  # type: ignore[arg-type]
+    assert verdict.evidence_type == "unknown"
+    assert not verdict.allowed

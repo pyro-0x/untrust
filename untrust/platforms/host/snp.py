@@ -19,6 +19,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
+from .policy import flag
+
 REPORT_SIZE = 0x4A0
 SUPPORTED_VERSIONS = (2, 3)
 MIN_NONCE_BYTES = 16
@@ -228,11 +230,17 @@ def check_tcb(
 
 
 def check_debug(report: SnpReport, baseline: dict[str, Any]) -> dict[str, Any]:
+    # Read every switch up front so a malformed one denies even when its policy
+    # bit happens to be clear on this host.
+    allow_debug = flag(baseline, "allow_debug", False)
+    allow_migration_agent = flag(baseline, "allow_migration_agent", False)
+    allow_smt = flag(baseline, "allow_smt", True)
+    require_single_socket = flag(baseline, "require_single_socket", False)
     issues: list[str] = []
-    if report.debug and not baseline.get("allow_debug", False):
+    if report.debug and not allow_debug:
         issues.append("guest policy allows DEBUG; the hypervisor can read and "
                       "write guest memory")
-    if report.migrate_ma and not baseline.get("allow_migration_agent", False):
+    if report.migrate_ma and not allow_migration_agent:
         issues.append("guest policy allows a migration agent, which can export "
                       "guest state")
     max_vmpl = baseline.get("max_vmpl")
@@ -245,10 +253,10 @@ def check_debug(report: SnpReport, baseline: dict[str, Any]) -> dict[str, Any]:
         issues.append(f"guest policy minimum ABI {abi[0]}.{abi[1]} is below "
                       f"{min_abi['major']}.{min_abi['minor']}")
     smt = bool(report.policy & POLICY_SMT)
-    if smt and not baseline.get("allow_smt", True):
+    if smt and not allow_smt:
         issues.append("guest policy allows SMT, which the baseline forbids")
     single_socket = bool(report.policy & POLICY_SINGLE_SOCKET)
-    if baseline.get("require_single_socket", False) and not single_socket:
+    if require_single_socket and not single_socket:
         issues.append("guest policy does not require a single socket")
     return {
         "policy": hex(report.policy),
