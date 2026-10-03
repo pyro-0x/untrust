@@ -1,4 +1,4 @@
-"""AMD SEV-SNP platform checks — GCP Confidential Space surface.
+"""GCP Confidential Space platform checks (AMD SEV-SNP Confidential VMs).
 
 First increment of untrust's v2.0 roadmap. The catalog starts with the two
 highest-signal checks — attestation-bound key release and runtime attestation
@@ -23,7 +23,7 @@ from .sa_identity import (
 from .vm_config import ConfidentialVmConfigCheck
 from .wif_siblings import ConfidentialSpaceWifSiblingsCheck
 
-SEVSNP_CHECKS: list[type[Check]] = [
+GCP_CSPACE_CHECKS: list[type[Check]] = [
     ConfidentialSpaceKeyReleaseCheck,  # CSPACE-KEYBIND-01
     ConfidentialSpaceKmsBindingCheck,  # CSPACE-KMS-01
     GcsBootstrapCheck,  # GCS-BOOT-01
@@ -39,7 +39,7 @@ SEVSNP_CHECKS: list[type[Check]] = [
 ]
 
 __all__ = [
-    "SEVSNP_CHECKS",
+    "GCP_CSPACE_CHECKS",
     "ConfidentialSpaceKeyReleaseCheck",
     "ConfidentialSpaceKmsBindingCheck",
     "GcsBootstrapCheck",

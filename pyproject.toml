@@ -17,6 +17,7 @@ keywords = [
     "enclave",
     "nitro",
     "sev-snp",
+    "tpm",
     "tdx",
     "confidential-computing",
     "cloud-security",
@@ -40,6 +41,7 @@ classifiers = [
 dependencies = [
     "boto3>=1.34",
     "click>=8.1",
+    "cryptography>=42",
     "google-api-python-client>=2.0",
     "google-auth>=2.0",
     "google-cloud-storage>=2.0",

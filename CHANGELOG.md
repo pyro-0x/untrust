@@ -5,6 +5,24 @@ All notable changes to `untrust` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Host attestation platform** (`--platform host`, 6 checks) that verifies a
+  captured AMD SEV-SNP report or TPM 2.0 quote offline against a pinned
+  baseline: chain to a pinned root (CHAIN), evidence signature (SIG), nonce
+  freshness (NONCE), debug policy or Secure Boot state (DEBUG), anti-rollback
+  TCB floor (TCB), and launch measurement or PCRs with event-log replay (MEAS).
+  The verdict logic is a scanner-independent `verify()` call that fails closed.
+- `cryptography>=42` is now a core dependency.
+
+### Changed
+
+- The GCP Confidential Space platform is renamed from `sev-snp` to
+  `gcp-cspace` (package `untrust.platforms.gcp_cspace`). `--platform sev-snp`
+  still works as an alias and prints a one-line notice.
+
 ## [1.2.0] - 2026-09-30
 
 Third platform: NVIDIA GPU Confidential Computing.

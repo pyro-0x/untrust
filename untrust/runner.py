@@ -97,7 +97,7 @@ INTRUSIVE_CHECK_IDS: frozenset[str] = frozenset({
 # in the target bucket, so --read-only excludes them too.
 PLATFORM_INTRUSIVE_CHECK_IDS: dict[str, frozenset[str]] = {
     "nitro": INTRUSIVE_CHECK_IDS,
-    "sev-snp": frozenset({"GCS-BOOT-02"}),
+    "gcp-cspace": frozenset({"GCS-BOOT-02"}),
     "gpu-cc": frozenset({"GPUCC-MODEL-01"}),
 }
 
@@ -177,6 +177,7 @@ def format_console(findings: list[Finding], target: Target) -> str:
         or target.wip_provider
         or target.gcp_project
         or target.attestation_token
+        or target.host_evidence
         or "unknown"
     )
     lines.append(f"Target: {target_desc}")
@@ -266,6 +267,9 @@ def format_json(findings: list[Finding], target: Target) -> str:
             "gpu_kbs_policy": target.gpu_kbs_policy,
             "gpu_model_bucket": target.gpu_model_bucket,
             "gpu_launch_config": target.gpu_launch_config,
+            "host_evidence": target.host_evidence,
+            "host_baseline": target.host_baseline,
+            "host_nonce": target.host_nonce,
         },
         "summary": {
             "total": len(findings),

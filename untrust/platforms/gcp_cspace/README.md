@@ -32,15 +32,15 @@ AWS SDK call.
 Demo (no GCP credentials needed):
 
 ```bash
-untrust scan --platform sev-snp --demo
-untrust list-checks --platform sev-snp
+untrust scan --platform gcp-cspace --demo
+untrust list-checks --platform gcp-cspace
 ```
 
 Live scan (requires Application Default Credentials with read access to the
 resources):
 
 ```bash
-untrust scan --platform sev-snp \
+untrust scan --platform gcp-cspace \
   --gcp-project my-proj \
   --wip-provider projects/123/locations/global/workloadIdentityPools/POOL/providers/PROV \
   --gcp-kms-key projects/my-proj/locations/global/keyRings/RING/cryptoKeys/KEY \
