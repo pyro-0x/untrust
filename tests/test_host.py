@@ -505,3 +505,38 @@ def test_verify_survives_evidence_without_a_type() -> None:
     verdict = verify(Broken(), {}, synth.NONCE)  # type: ignore[arg-type]
     assert verdict.evidence_type == "unknown"
     assert not verdict.allowed
+
+
+def test_flag_reader_defaults_and_explicit_values() -> None:
+    from untrust.platforms.host.policy import flag
+
+    assert flag({}, "allow_smt", True) is True
+    assert flag({}, "allow_debug", False) is False
+    assert flag({"allow_smt": False}, "allow_smt", True) is False
+    assert flag({"allow_debug": True}, "allow_debug", False) is True
+    with pytest.raises(ValueError):
+        flag({"allow_debug": None}, "allow_debug", False)
+
+
+def test_bad_secure_boot_switch_denies_without_an_event_log() -> None:
+    fx = synth.tpm_fixture()
+    fx.evidence.event_log = None
+    fx.baseline["tpm2"]["require_secure_boot"] = "no"
+    assert not verify(fx.evidence, fx.baseline, fx.nonce).allowed
+
+
+def test_all_bad_switches_reported_in_one_error() -> None:
+    fx = synth.snp_fixture()
+    fx.baseline["sev-snp"].update(allow_debug="x", allow_smt=0)
+    issue = verify(fx.evidence, fx.baseline, fx.nonce).controls["chain"].issues[0]
+    assert "'allow_debug' ('x')" in issue and "'allow_smt' (0)" in issue
+
+
+def test_error_handler_survives_a_raising_type_property() -> None:
+    class Hostile:
+        @property
+        def type(self) -> str:
+            raise RuntimeError("no type")
+
+    verdict = verify(Hostile(), {}, synth.NONCE)  # type: ignore[arg-type]
+    assert verdict.evidence_type == "unknown" and not verdict.allowed

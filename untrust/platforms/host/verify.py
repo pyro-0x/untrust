@@ -35,7 +35,7 @@ from cryptography import x509
 
 from . import snp, tpm
 from .chain import load_certs, verify_chain
-from .policy import flag
+from .policy import check_switches, flag
 
 CONTROLS = ("chain", "signature", "nonce", "debug", "tcb", "measurement")
 EVIDENCE_TYPES = ("sev-snp", "tpm2")
@@ -132,16 +132,29 @@ def verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None = N
     try:
         return _verify(evidence, baseline, nonce, now)
     except Exception as e:  # fail closed on anything
-        # Read the type defensively: the error may come from a malformed evidence
-        # object, and the handler itself must not raise.
-        kind = getattr(evidence, "type", None)
-        return _failed(kind if isinstance(kind, str) else "unknown",
-                       f"verification error: {type(e).__name__}: {e}")
+        return _failed(_evidence_kind(evidence), _describe(e))
+
+
+def _evidence_kind(evidence: Any) -> str:
+    """The evidence type, read so that the error handler itself can never raise."""
+    try:
+        kind = evidence.type
+    except Exception:  # a malformed object, or a property that raises
+        return "unknown"
+    return kind if isinstance(kind, str) else "unknown"
+
+
+def _describe(error: Exception) -> str:
+    try:
+        return f"verification error: {type(error).__name__}: {error}"
+    except Exception:  # an exception whose __str__ raises
+        return f"verification error: {type(error).__name__}"
 
 
 def _verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None,
             now: datetime | None) -> HostVerdict:
     policy = baseline.get(evidence.type) or {}
+    check_switches(policy, evidence.type)
     if not evidence.certs:
         return _failed(evidence.type, "evidence carries no signing certificate chain")
     signer = evidence.certs[0]
