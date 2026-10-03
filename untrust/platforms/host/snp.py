@@ -232,10 +232,10 @@ def check_tcb(
 def check_debug(report: SnpReport, baseline: dict[str, Any]) -> dict[str, Any]:
     # Read every switch up front so a malformed one denies even when its policy
     # bit happens to be clear on this host.
-    allow_debug = flag(baseline, "allow_debug", False)
-    allow_migration_agent = flag(baseline, "allow_migration_agent", False)
-    allow_smt = flag(baseline, "allow_smt", True)
-    require_single_socket = flag(baseline, "require_single_socket", False)
+    allow_debug = flag(baseline, "allow_debug")
+    allow_migration_agent = flag(baseline, "allow_migration_agent")
+    allow_smt = flag(baseline, "allow_smt")
+    require_single_socket = flag(baseline, "require_single_socket")
     issues: list[str] = []
     if report.debug and not allow_debug:
         issues.append("guest policy allows DEBUG; the hypervisor can read and "

@@ -35,7 +35,7 @@ from cryptography import x509
 
 from . import snp, tpm
 from .chain import load_certs, verify_chain
-from .policy import check_switches, flag
+from .policy import check_switches, flag, section
 
 CONTROLS = ("chain", "signature", "nonce", "debug", "tcb", "measurement")
 EVIDENCE_TYPES = ("sev-snp", "tpm2")
@@ -153,7 +153,7 @@ def _describe(error: Exception) -> str:
 
 def _verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None,
             now: datetime | None) -> HostVerdict:
-    policy = baseline.get(evidence.type) or {}
+    policy = section(baseline, evidence.type)
     check_switches(policy, evidence.type)
     if not evidence.certs:
         return _failed(evidence.type, "evidence carries no signing certificate chain")
@@ -183,7 +183,7 @@ def _verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None,
         evaluate = lambda: {  # noqa: E731
             "chain": chain,
             "signature": tpm.verify_quote_signature(
-                quote, sig, signer, require_ak_eku=flag(policy, "require_ak_eku", True)),
+                quote, sig, signer, require_ak_eku=flag(policy, "require_ak_eku")),
             "nonce": tpm.check_nonce(quote, nonce),
             "debug": tpm.check_secure_boot(quote, evidence.pcrs, log, policy),
             "tcb": tpm.check_tcb(quote, policy),

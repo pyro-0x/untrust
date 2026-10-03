@@ -510,12 +510,14 @@ def test_verify_survives_evidence_without_a_type() -> None:
 def test_flag_reader_defaults_and_explicit_values() -> None:
     from untrust.platforms.host.policy import flag
 
-    assert flag({}, "allow_smt", True) is True
-    assert flag({}, "allow_debug", False) is False
-    assert flag({"allow_smt": False}, "allow_smt", True) is False
-    assert flag({"allow_debug": True}, "allow_debug", False) is True
+    assert flag({}, "allow_smt") is True
+    assert flag({}, "allow_debug") is False
+    assert flag({"allow_smt": False}, "allow_smt") is False
+    assert flag({"allow_debug": True}, "allow_debug") is True
     with pytest.raises(ValueError):
-        flag({"allow_debug": None}, "allow_debug", False)
+        flag({"allow_debug": None}, "allow_debug")
+    with pytest.raises(KeyError):
+        flag({}, "allow_anything")
 
 
 def test_bad_secure_boot_switch_denies_without_an_event_log() -> None:
@@ -540,3 +542,25 @@ def test_error_handler_survives_a_raising_type_property() -> None:
 
     verdict = verify(Hostile(), {}, synth.NONCE)  # type: ignore[arg-type]
     assert verdict.evidence_type == "unknown" and not verdict.allowed
+
+
+def test_every_flag_call_site_uses_a_registered_switch() -> None:
+    # Guards against drift between SWITCHES and the controls that read them.
+    import re
+    from pathlib import Path
+
+    from untrust.platforms.host import policy
+
+    source = "".join(p.read_text() for p in Path(policy.__file__).parent.glob("*.py")
+                     if p.name != "policy.py")
+    used = set(re.findall(r'flag\(\w+, "(\w+)"\)', source))
+    registered = {k for switches in policy.SWITCHES.values() for k in switches}
+    assert used == registered
+
+
+def test_non_object_baseline_section_denies() -> None:
+    fx = synth.snp_fixture()
+    fx.baseline["sev-snp"] = False
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert not verdict.allowed
+    assert "must be an object" in verdict.controls["chain"].issues[0]

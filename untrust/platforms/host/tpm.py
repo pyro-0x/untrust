@@ -326,7 +326,7 @@ def check_tcb(quote: Quote, baseline: dict[str, Any]) -> dict[str, Any]:
     elif quote.firmware_version < int(floor):
         issues.append(f"TPM firmware 0x{quote.firmware_version:016x} is below the "
                       f"floor 0x{int(floor):016x}")
-    if flag(baseline, "require_clock_safe", False) and not quote.safe:
+    if flag(baseline, "require_clock_safe") and not quote.safe:
         issues.append("TPM clock is not marked safe; it may have been rolled back")
     return {"firmware_version": f"0x{quote.firmware_version:016x}",
             "min_firmware_version": floor, "clock_safe": quote.safe,
@@ -341,7 +341,7 @@ def check_secure_boot(quote: Quote, pcrs: dict[str, dict[int, bytes]], log: Even
     The log's SecureBoot value only counts if the log replays to a quoted PCR 7;
     otherwise the host could hand over any log it likes.
     """
-    require = flag(baseline, "require_secure_boot", True)
+    require = flag(baseline, "require_secure_boot")
     if log is None:
         return {"secure_boot": None, "issues": [], "passed": None}
     quoted = {(bank, i) for bank, idx in quote.selection for i in idx}
