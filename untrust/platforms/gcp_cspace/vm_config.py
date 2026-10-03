@@ -7,8 +7,8 @@ the instance config and verifies the hardware/boot posture:
 
   * confidentialInstanceConfig.enableConfidentialCompute == true
   * confidentialInstanceType is a Confidential VM type: SEV, TDX or SEV_SNP
-  * when the VM runs Confidential Space (tee-* launcher metadata or the
-    confidential-space image), the type must be one Confidential Space
+  * when the VM runs Confidential Space (any tee-* launcher metadata key, or the
+    confidential-space image license), the type must be one Confidential Space
     attests: AMD SEV or Intel TDX. Google's attestation service rejects SEV-SNP
     (UNSUPPORTED_CC_TECHNOLOGY), so the launcher exits before the workload
     starts and no attestation token is ever issued. SEV-SNP stays fine for a
@@ -29,8 +29,9 @@ CSPACE_TYPES = {"SEV", "TDX"}
 
 def runs_confidential_space(instance: dict[str, Any]) -> bool:
     """True when the instance boots the Confidential Space launcher."""
+    # Any tee-* key is launcher config (tee-image-reference, tee-cmd, tee-env-*).
     items = (instance.get("metadata", {}) or {}).get("items", []) or []
-    if any(str(i.get("key", "")).startswith("tee-image-reference") for i in items):
+    if any(str(i.get("key", "")).startswith("tee-") for i in items):
         return True
     for disk in instance.get("disks", []) or []:
         if any("confidential-space" in str(lic) for lic in disk.get("licenses", []) or []):

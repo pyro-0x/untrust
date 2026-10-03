@@ -37,10 +37,14 @@ def _decode_jwt_claims(token: str) -> dict[str, Any]:
     return claims
 
 
+# Exact: a near-miss such as GCP_AMD_SEV_SNP is the technology Confidential
+# Space rejects, so prefixes are not trusted.
+ATTESTED_HWMODELS = frozenset({"GCP_AMD_SEV", "GCP_AMD_SEV_ES", "GCP_INTEL_TDX"})
+
+
 def attested_hwmodel(hwmodel: str) -> bool:
     """AMD SEV (GCP_AMD_SEV, and its SEV-ES variant) or Intel TDX."""
-    value = hwmodel.upper()
-    return value.startswith("GCP_AMD_SEV") or value == "GCP_INTEL_TDX"
+    return hwmodel.upper() in ATTESTED_HWMODELS
 
 
 def analyze_token_claims(claims: dict[str, Any]) -> dict[str, Any]:

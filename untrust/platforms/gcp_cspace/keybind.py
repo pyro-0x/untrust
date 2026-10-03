@@ -26,9 +26,12 @@ Recommended-but-not-gating bindings (reported as additional weaknesses):
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ...checks.base import Check, Finding, Severity, Status, Target
+
+_HWMODEL_EQ = re.compile(r"hwmodel\s*==\s*['\"]gcp_(amd_sev(_es)?|intel_tdx)['\"]")
 
 
 def analyze_wif_condition(condition: str | None) -> dict[str, Any]:
@@ -52,7 +55,9 @@ def analyze_wif_condition(condition: str | None) -> dict[str, Any]:
         "image_digest_present_only": mentions_image_digest and not pins_image_digest,
         # recommended bindings
         "binds_swname": ("swname" in t) and ("confidential_space" in t),
-        "binds_hwmodel": ("hwmodel" in t) and ("gcp_amd_sev" in t or "gcp_intel_tdx" in t),
+        # An equality binding, not a mention: hwmodel != '...' or a value inside
+        # an unrelated branch does not count.
+        "binds_hwmodel": bool(_HWMODEL_EQ.search(t)),
         "constrains_support_attributes": ("support_attributes" in t) and ("stable" in t),
     }
 

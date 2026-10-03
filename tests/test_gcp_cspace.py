@@ -90,6 +90,19 @@ def test_wif_condition_hwmodel_binding_covers_sev_and_tdx(hwmodel: str) -> None:
     assert not any("hwmodel" in w for w in v["recommended_weaknesses"])
 
 
+@pytest.mark.parametrize(
+    "cond",
+    [
+        "assertion.hwmodel != 'GCP_AMD_SEV'",
+        "assertion.swname == 'CONFIDENTIAL_SPACE' || 'GCP_INTEL_TDX' == 'x'",
+        "assertion.hwmodel == 'GCP_AMD_SEV_SNP'",
+    ],
+)
+def test_wif_condition_hwmodel_mention_is_not_a_binding(cond: str) -> None:
+    v = analyze_wif_condition(cond)
+    assert v["binds_hwmodel"] is False
+
+
 def test_keybind_check_skips_without_provider() -> None:
     f = ConfidentialSpaceKeyReleaseCheck().run(Target(platform="gcp-cspace"))
     assert f.status == Status.SKIP
@@ -148,7 +161,7 @@ def test_token_claims_intel_tdx_hardware_passes() -> None:
     assert analyze_token_claims(_trusted_claims("GCP_INTEL_TDX"))["passed"] is True
 
 
-@pytest.mark.parametrize("hwmodel", ["GCP_SHIELDED_VM", ""])
+@pytest.mark.parametrize("hwmodel", ["GCP_SHIELDED_VM", "", "GCP_AMD_SEV_SNP", "GCP_AMD_SEVX"])
 def test_token_claims_non_confidential_hardware_fails(hwmodel: str) -> None:
     v = analyze_token_claims(_trusted_claims(hwmodel))
     assert v["passed"] is False
@@ -301,6 +314,13 @@ def test_vm_confidential_space_detected_from_boot_image_license() -> None:
     instance = _vm("SEV_SNP", cspace=False)
     instance["disks"] = [{"licenses": ["projects/confidential-space-images/global/licenses/x"]}]
     assert analyze_instance_config(instance)["runs_confidential_space"] is True
+
+
+def test_vm_confidential_space_detected_from_any_tee_key() -> None:
+    instance = _vm("SEV_SNP", cspace=False)
+    instance["metadata"] = {"items": [{"key": "tee-env-BUCKET_NAME", "value": "b"}]}
+    v = analyze_instance_config(instance)
+    assert v["runs_confidential_space"] is True and v["passed"] is False
 
 
 def test_vm_unknown_confidential_type_fails() -> None:
