@@ -413,3 +413,65 @@ def test_short_nonce_is_rejected() -> None:
     assert any("at least 16" in i for i in _issues(fx, "nonce", nonce=b"\x07"))
     tfx = synth.tpm_fixture(extra_data=b"\x07")
     assert any("at least 16" in i for i in _issues(tfx, "nonce", nonce=b"\x07"))
+
+
+# --- Second review: AK key usage, total fail-closed, and optional policy pins --
+
+
+def test_tpm_ak_without_attestation_eku_fails() -> None:
+    fx = synth.tpm_fixture(ak_eku=False)
+    assert "TCG AK EKU" in _issues(fx, "signature")[0]
+    fx.baseline["tpm2"]["require_ak_eku"] = False
+    assert verify(fx.evidence, fx.baseline, fx.nonce).controls["signature"].passed is True
+
+
+def test_verify_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from untrust.platforms.host import verify as verify_mod
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("unsupported signature algorithm")
+
+    monkeypatch.setattr(verify_mod, "verify_chain", boom)
+    fx = synth.snp_fixture()
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert not verdict.allowed
+    assert "RuntimeError" in verdict.controls["chain"].issues[0]
+
+
+def test_overflowing_baseline_floor_fails_closed() -> None:
+    fx = synth.tpm_fixture()
+    fx.baseline["tpm2"]["min_firmware_version"] = float("inf")
+    assert not verify(fx.evidence, fx.baseline, fx.nonce).allowed
+
+
+def test_secure_boot_under_a_vendor_guid_is_ignored() -> None:
+    vendor = bytearray(synth._secure_boot_var(True))
+    vendor[:16] = b"\x11" * 16
+    log = (synth._spec_id_event()
+           + synth._event(0, 0x00000008, b"firmware")
+           + synth._event(7, tpm.EV_EFI_VARIABLE_DRIVER_CONFIG, bytes(vendor)))
+    fx = synth.tpm_fixture(log=log)
+    assert "does not measure the SecureBoot variable" in _issues(fx, "debug")[0]
+
+
+def test_tpm_clock_state_is_reported_and_can_be_required() -> None:
+    fx = synth.tpm_fixture()
+    tcb = verify(fx.evidence, fx.baseline, fx.nonce).controls["tcb"]
+    assert tcb.evidence["clock_safe"] is True and tcb.evidence["reset_count"] == 7
+    quote = bytearray(fx.evidence.quote)
+    safe_at = 4 + 2 + 2 + 34 + 2 + len(synth.NONCE) + 8 + 4 + 4
+    quote[safe_at] = 0
+    fx.evidence.quote = bytes(quote)
+    fx.baseline["tpm2"]["require_clock_safe"] = True
+    assert any("clock is not marked safe" in i
+               for i in verify(fx.evidence, fx.baseline, fx.nonce).controls["tcb"].issues)
+
+
+def test_snp_optional_policy_pins() -> None:
+    fx = synth.snp_fixture()  # policy 0x30000: SMT allowed, ABI 0.0, not single-socket
+    fx.baseline["sev-snp"].update(min_policy_abi={"major": 1, "minor": 51},
+                                  allow_smt=False, require_single_socket=True)
+    issues = _issues(fx, "debug")
+    assert any("minimum ABI 0.0 is below 1.51" in i for i in issues)
+    assert any("allows SMT" in i for i in issues)
+    assert any("single socket" in i for i in issues)

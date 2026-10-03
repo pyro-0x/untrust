@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from cryptography import x509
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives.serialization import Encoding
 
 
@@ -34,7 +34,7 @@ def _issued_by(cert: x509.Certificate, issuer: x509.Certificate) -> str | None:
         cert.verify_directly_issued_by(issuer)
     except InvalidSignature:
         return "signature does not verify"
-    except (ValueError, TypeError) as e:
+    except (ValueError, TypeError, UnsupportedAlgorithm) as e:
         return str(e)
     return None
 

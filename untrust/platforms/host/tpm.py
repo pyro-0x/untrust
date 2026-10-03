@@ -35,6 +35,10 @@ _CRYPTO_HASH: dict[str, Callable[[], hashes.HashAlgorithm]] = {
 }
 
 MIN_NONCE_BYTES = 16
+# TCG EKU for attestation-key certificates (tcg-kp-AIKCertificate).
+TCG_AK_EKU = "2.23.133.8.3"
+# EFI_GLOBAL_VARIABLE {8BE4DF61-93CA-11D2-AA0D-00E098032B8C}, as stored on the wire.
+EFI_GLOBAL_VARIABLE_GUID = bytes.fromhex("61dfe48bca93d211aa0d00e098032b8c")
 
 EV_NO_ACTION = 0x00000003
 EV_EFI_VARIABLE_DRIVER_CONFIG = 0x80000001
@@ -119,9 +123,19 @@ def parse_signature(raw: bytes) -> Signature:
     raise ValueError(f"unsupported TPM signature algorithm 0x{alg:04x}")
 
 
-def verify_quote_signature(quote: Quote, sig: Signature,
-                           ak_cert: x509.Certificate) -> dict[str, Any]:
+def verify_quote_signature(quote: Quote, sig: Signature, ak_cert: x509.Certificate,
+                           *, require_ak_eku: bool = True) -> dict[str, Any]:
     issues: list[str] = []
+    try:
+        ekus = [e.dotted_string for e in
+                ak_cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value]
+    except x509.ExtensionNotFound:
+        ekus = []
+    if require_ak_eku and TCG_AK_EKU not in ekus:
+        # Without AK provenance, an unrestricted key could sign a blob that merely
+        # starts with TPM_GENERATED_VALUE, i.e. a forged TPMS_ATTEST.
+        issues.append(f"AK certificate lacks the TCG AK EKU ({TCG_AK_EKU}); nothing "
+                      "shows the key is a restricted TPM attestation key")
     if sig.hash not in _CRYPTO_HASH:
         issues.append(f"unsupported quote hash {sig.hash}")
     elif sig.hash == "sha1":
@@ -225,8 +239,9 @@ def replay_event_log(raw: bytes) -> EventLog:
                 current = (bytes(size - 1) + bytes([locality])) if pcr == 0 else bytes(size)
             log.pcrs[bank][pcr] = hashlib.new(bank, current + digest).digest()
         if event_type == EV_EFI_VARIABLE_DRIVER_CONFIG and pcr == 7:
-            name, value = _efi_variable(data)
-            if name == "SecureBoot":
+            guid, name, value = _efi_variable(data)
+            # Only the global SecureBoot variable counts, not a same-named vendor one.
+            if name == "SecureBoot" and guid == EFI_GLOBAL_VARIABLE_GUID:
                 # Replay only binds the digests; the event data is what we read, so
                 # it must hash to those digests or a forged value could be slipped in.
                 # Unbound and conflicting states are sticky: no later event clears them.
@@ -243,13 +258,13 @@ def replay_event_log(raw: bytes) -> EventLog:
     return log
 
 
-def _efi_variable(data: bytes) -> tuple[str, bytes]:
+def _efi_variable(data: bytes) -> tuple[bytes, str, bytes]:
     """Decode ``UEFI_VARIABLE_DATA``: GUID, name length, data length, name, data."""
     r = _Reader(data, "<")
-    r.take(16)
+    guid = r.take(16)
     name_len, data_len = r.uint(8), r.uint(8)
     name = r.take(name_len * 2).decode("utf-16-le", errors="replace")
-    return name, r.take(data_len)
+    return guid, name, r.take(data_len)
 
 
 def parse_pcrs(doc: dict[str, Any]) -> dict[str, dict[int, bytes]]:
@@ -309,8 +324,12 @@ def check_tcb(quote: Quote, baseline: dict[str, Any]) -> dict[str, Any]:
     elif quote.firmware_version < int(floor):
         issues.append(f"TPM firmware 0x{quote.firmware_version:016x} is below the "
                       f"floor 0x{int(floor):016x}")
+    if baseline.get("require_clock_safe", False) and not quote.safe:
+        issues.append("TPM clock is not marked safe; it may have been rolled back")
     return {"firmware_version": f"0x{quote.firmware_version:016x}",
-            "min_firmware_version": floor, "issues": issues, "passed": not issues}
+            "min_firmware_version": floor, "clock_safe": quote.safe,
+            "reset_count": quote.reset_count, "restart_count": quote.restart_count,
+            "issues": issues, "passed": not issues}
 
 
 def check_secure_boot(quote: Quote, pcrs: dict[str, dict[int, bytes]], log: EventLog | None,

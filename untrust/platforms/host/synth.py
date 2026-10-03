@@ -184,6 +184,7 @@ def tpm_fixture(
     tamper: bool = False,
     pin_root: bool = True,
     hash_name: str = "sha256",
+    ak_eku: bool = True,
 ) -> Fixture:
     """A quote signed by a CA-certified AK, PCRs, and an event log; passes by default."""
     log = event_log() if log is None else log
@@ -193,7 +194,8 @@ def tpm_fixture(
 
     ca_key, ak_key = _ec("ak-ca", "p256"), _ec("ak", "p256")
     ca = _cert("untrust AK CA", ca_key, "untrust AK CA", ca_key, ca=True)
-    ak = _cert("host-01 AK", ak_key, "untrust AK CA", ca_key, ca=False)
+    eku = [x509.ExtendedKeyUsage([x509.ObjectIdentifier(tpm.TCG_AK_EKU)])] if ak_eku else []
+    ak = _cert("host-01 AK", ak_key, "untrust AK CA", ca_key, ca=False, extensions=eku)
 
     bitmap = bytearray(3)
     for i in quoted_pcrs:
