@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import json
 
+import pytest
+
 from untrust.checks.base import Status, Target
 from untrust.platforms import checks_for, demo_for, supported_platforms
 from untrust.platforms.gcp_cspace.attestation import (
@@ -81,6 +83,26 @@ def test_wif_condition_fully_bound_passes() -> None:
     assert v["gating_weaknesses"] == []
 
 
+@pytest.mark.parametrize("hwmodel", ["GCP_AMD_SEV", "GCP_INTEL_TDX"])
+def test_wif_condition_hwmodel_binding_covers_sev_and_tdx(hwmodel: str) -> None:
+    v = analyze_wif_condition(f"assertion.hwmodel == '{hwmodel}'")
+    assert v["binds_hwmodel"] is True
+    assert not any("hwmodel" in w for w in v["recommended_weaknesses"])
+
+
+@pytest.mark.parametrize(
+    "cond",
+    [
+        "assertion.hwmodel != 'GCP_AMD_SEV'",
+        "assertion.swname == 'CONFIDENTIAL_SPACE' || 'GCP_INTEL_TDX' == 'x'",
+        "assertion.hwmodel == 'GCP_AMD_SEV_SNP'",
+    ],
+)
+def test_wif_condition_hwmodel_mention_is_not_a_binding(cond: str) -> None:
+    v = analyze_wif_condition(cond)
+    assert v["binds_hwmodel"] is False
+
+
 def test_keybind_check_skips_without_provider() -> None:
     f = ConfidentialSpaceKeyReleaseCheck().run(Target(platform="gcp-cspace"))
     assert f.status == Status.SKIP
@@ -122,6 +144,28 @@ def test_token_claims_trusted_passes() -> None:
     )
     assert v["passed"] is True
     assert v["issues"] == []
+
+
+def _trusted_claims(hwmodel: str) -> dict:
+    return {
+        "dbgstat": "disabled-since-boot",
+        "hwmodel": hwmodel,
+        "submods": {
+            "container": {"image_digest": "sha256:abc", "image_signatures": [{"signature": "."}]},
+            "confidential_space": {"support_attributes": ["STABLE"]},
+        },
+    }
+
+
+def test_token_claims_intel_tdx_hardware_passes() -> None:
+    assert analyze_token_claims(_trusted_claims("GCP_INTEL_TDX"))["passed"] is True
+
+
+@pytest.mark.parametrize("hwmodel", ["GCP_SHIELDED_VM", "", "GCP_AMD_SEV_SNP", "GCP_AMD_SEVX"])
+def test_token_claims_non_confidential_hardware_fails(hwmodel: str) -> None:
+    v = analyze_token_claims(_trusted_claims(hwmodel))
+    assert v["passed"] is False
+    assert any("GCP_AMD_SEV or GCP_INTEL_TDX" in i for i in v["issues"])
 
 
 def test_attestation_check_decodes_jwt(tmp_path) -> None:
@@ -227,39 +271,70 @@ def test_vm_plain_instance_fails() -> None:
     assert v["passed"] is False
 
 
-def test_vm_sev_snp_shielded_passes() -> None:
-    v = analyze_instance_config(
-        {
-            "confidentialInstanceConfig": {
-                "enableConfidentialCompute": True,
-                "confidentialInstanceType": "SEV_SNP",
-            },
-            "shieldedInstanceConfig": {
-                "enableSecureBoot": True,
-                "enableVtpm": True,
-                "enableIntegrityMonitoring": True,
-            },
-        }
-    )
+SHIELDED = {"enableSecureBoot": True, "enableVtpm": True, "enableIntegrityMonitoring": True}
+CSPACE_METADATA = {"items": [{"key": "tee-image-reference", "value": "registry/workload@sha256:x"}]}
+
+
+def _vm(cc_type: str, *, cspace: bool) -> dict:
+    instance = {
+        "confidentialInstanceConfig": {
+            "enableConfidentialCompute": True,
+            "confidentialInstanceType": cc_type,
+        },
+        "shieldedInstanceConfig": SHIELDED,
+    }
+    if cspace:
+        instance["metadata"] = CSPACE_METADATA
+    return instance
+
+
+@pytest.mark.parametrize("cc_type", ["SEV", "TDX"])
+def test_vm_confidential_space_on_sev_or_tdx_passes(cc_type: str) -> None:
+    v = analyze_instance_config(_vm(cc_type, cspace=True))
     assert v["passed"] is True
+    assert v["runs_confidential_space"] is True
+    assert v["tee"] in ("AMD SEV", "Intel TDX")
 
 
-def test_vm_plain_sev_is_not_snp() -> None:
-    v = analyze_instance_config(
-        {
-            "confidentialInstanceConfig": {
-                "enableConfidentialCompute": True,
-                "confidentialInstanceType": "SEV",
-            },
-            "shieldedInstanceConfig": {
-                "enableSecureBoot": True,
-                "enableVtpm": True,
-                "enableIntegrityMonitoring": True,
-            },
-        }
-    )
+def test_vm_confidential_space_on_sev_snp_fails() -> None:
+    # Confidential Space attestation rejects SEV-SNP (UNSUPPORTED_CC_TECHNOLOGY):
+    # the launcher exits before the workload starts.
+    v = analyze_instance_config(_vm("SEV_SNP", cspace=True))
     assert v["passed"] is False
-    assert any("SEV_SNP" in i for i in v["issues"])
+    assert any("UNSUPPORTED_CC_TECHNOLOGY" in i for i in v["issues"])
+
+
+def test_vm_plain_sev_snp_confidential_vm_passes() -> None:
+    v = analyze_instance_config(_vm("SEV_SNP", cspace=False))
+    assert v["passed"] is True
+    assert v["tee"] == "AMD SEV-SNP" and v["runs_confidential_space"] is False
+
+
+def test_vm_confidential_space_detected_from_boot_image_license() -> None:
+    instance = _vm("SEV_SNP", cspace=False)
+    instance["disks"] = [{"licenses": ["projects/confidential-space-images/global/licenses/x"]}]
+    assert analyze_instance_config(instance)["runs_confidential_space"] is True
+
+
+def test_vm_confidential_space_detected_from_any_tee_key() -> None:
+    instance = _vm("SEV_SNP", cspace=False)
+    instance["metadata"] = {"items": [{"key": "tee-env-BUCKET_NAME", "value": "b"}]}
+    v = analyze_instance_config(instance)
+    assert v["runs_confidential_space"] is True and v["passed"] is False
+
+
+def test_vm_unknown_confidential_type_fails() -> None:
+    v = analyze_instance_config(_vm("", cspace=True))
+    assert v["passed"] is False
+    assert any("expected SEV, TDX or SEV_SNP" in i for i in v["issues"])
+
+
+def test_vm_shielded_boot_still_required() -> None:
+    instance = _vm("TDX", cspace=True)
+    instance["shieldedInstanceConfig"] = {"enableSecureBoot": False, "enableVtpm": True,
+                                          "enableIntegrityMonitoring": True}
+    v = analyze_instance_config(instance)
+    assert v["passed"] is False and "Secure Boot is disabled" in v["issues"]
 
 
 # --- demo -------------------------------------------------------------------

@@ -8,7 +8,8 @@ describe a non-debug, signed, production workload on AMD SEV hardware:
   * ``submods.confidential_space.support_attributes`` contains STABLE/LATEST and
     NOT USABLE                                       — not a debug-tooling image
   * ``submods.container.image_signatures`` present   — the image is cosign-signed
-  * ``hwmodel`` names an AMD SEV model                — SEV-SNP hardware
+  * ``hwmodel`` names hardware Confidential Space attests: an AMD SEV model
+    (``GCP_AMD_SEV``) or Intel TDX (``GCP_INTEL_TDX``)
 
 NOTE: this inspects claims only. Full trust also requires verifying the token's
 RS256 signature against Google's Confidential Space JWKS and checking aud/exp/
@@ -36,6 +37,16 @@ def _decode_jwt_claims(token: str) -> dict[str, Any]:
     return claims
 
 
+# Exact: a near-miss such as GCP_AMD_SEV_SNP is the technology Confidential
+# Space rejects, so prefixes are not trusted.
+ATTESTED_HWMODELS = frozenset({"GCP_AMD_SEV", "GCP_AMD_SEV_ES", "GCP_INTEL_TDX"})
+
+
+def attested_hwmodel(hwmodel: str) -> bool:
+    """AMD SEV (GCP_AMD_SEV, and its SEV-ES variant) or Intel TDX."""
+    return hwmodel.upper() in ATTESTED_HWMODELS
+
+
 def analyze_token_claims(claims: dict[str, Any]) -> dict[str, Any]:
     """Pure analysis of Confidential Space attestation-token claims."""
     dbgstat = claims.get("dbgstat", "")
@@ -55,8 +66,11 @@ def analyze_token_claims(claims: dict[str, Any]) -> dict[str, Any]:
         issues.append("no support_attributes present (cannot confirm STABLE/LATEST image)")
     if not signatures:
         issues.append("no image_signatures present (workload image is unsigned)")
-    if "SEV" not in hwmodel.upper():
-        issues.append(f"hwmodel '{hwmodel or 'unset'}' is not an AMD SEV model")
+    if not attested_hwmodel(hwmodel):
+        issues.append(
+            f"hwmodel '{hwmodel or 'unset'}' is not Confidential Space hardware "
+            "(expected GCP_AMD_SEV or GCP_INTEL_TDX)"
+        )
 
     return {
         "dbgstat": dbgstat,

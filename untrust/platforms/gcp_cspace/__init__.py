@@ -1,4 +1,4 @@
-"""GCP Confidential Space platform checks (AMD SEV-SNP Confidential VMs).
+"""GCP Confidential Space platform checks (AMD SEV / Intel TDX Confidential VMs).
 
 First increment of untrust's v2.0 roadmap. The catalog starts with the two
 highest-signal checks — attestation-bound key release and runtime attestation
