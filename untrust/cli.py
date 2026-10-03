@@ -260,7 +260,7 @@ def scan(
         bucket=target_bucket,
         kms_key_id=kms_key_id,
         instance_id=instance_id,
-        region=region,
+        region=None if platform == "azure-cvm" else region,  # --region is the AWS default
         dynamodb_table=dynamodb_table,
         secret_arn=secret_arn,
         parameter_path=parameter_path,

@@ -220,5 +220,8 @@ def test_demo_and_cli() -> None:
     result = CliRunner().invoke(cli, ["scan", "--platform", "azure-cvm", "--demo", "--json"])
     assert result.exit_code in (0, 1), result.output
     assert '"AZ-SKR-01"' in result.output
+    token_only = CliRunner().invoke(cli, ["scan", "--platform", "azure-cvm", "--json",
+                                          "--azure-attestation-token", "/nonexistent.jwt"])
+    assert '"region": null' in token_only.output  # the AWS --region default does not leak
     missing = CliRunner().invoke(cli, ["scan", "--platform", "azure-cvm"])
     assert missing.exit_code == 1 and "--azure-vm" in missing.output
