@@ -52,6 +52,16 @@ def _host_demo() -> tuple[Target, list[Finding]]:
     return run_host_demo()
 
 
+def _azure_cvm_checks() -> list[type[Check]]:
+    from .azure_cvm import AZURE_CVM_CHECKS
+    return AZURE_CVM_CHECKS
+
+
+def _azure_cvm_demo() -> tuple[Target, list[Finding]]:
+    from .azure_cvm.demo import run_azure_cvm_demo
+    return run_azure_cvm_demo()
+
+
 # platform -> (lazy check-list loader, lazy demo loader)
 _ChecksLoader = Callable[[], list[type[Check]]]
 _DemoLoader = Callable[[], tuple[Target, list[Finding]]]
@@ -61,6 +71,7 @@ _REGISTRY: dict[str, tuple[_ChecksLoader, _DemoLoader]] = {
     Platform.GCP_CSPACE.value: (_gcp_cspace_checks, _gcp_cspace_demo),
     Platform.GPU_CC.value: (_gpucc_checks, _gpucc_demo),
     Platform.HOST.value: (_host_checks, _host_demo),
+    Platform.AZURE_CVM.value: (_azure_cvm_checks, _azure_cvm_demo),
     # Platform.TDX.value: (_tdx_checks, _tdx_demo),  # future
 }
 

@@ -178,6 +178,8 @@ def format_console(findings: list[Finding], target: Target) -> str:
         or target.gcp_project
         or target.attestation_token
         or target.host_evidence
+        or target.azure_vm
+        or target.azure_key
         or "unknown"
     )
     lines.append(f"Target: {target_desc}")
@@ -270,6 +272,13 @@ def format_json(findings: list[Finding], target: Target) -> str:
             "host_evidence": target.host_evidence,
             "host_baseline": target.host_baseline,
             "host_nonce": target.host_nonce,
+            "azure_subscription": target.azure_subscription,
+            "azure_resource_group": target.azure_resource_group,
+            "azure_vm": target.azure_vm,
+            "azure_key_vault": target.azure_key_vault,
+            "azure_key": target.azure_key,
+            "azure_attestation_provider": target.azure_attestation_provider,
+            "azure_attestation_token": target.azure_attestation_token,
         },
         "summary": {
             "total": len(findings),

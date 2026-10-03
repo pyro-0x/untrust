@@ -112,6 +112,23 @@ untrust scan --platform gpu-cc \
 
 GPU CC is file-based: it reads a captured attestation report plus the verifier, key-release, and launch policies you supply. The retained `nvattest` outputs sit beside the report (see the [platform README](untrust/platforms/gpucc/README.md#evidence-files)). Any single target flag is enough; checks whose inputs are absent report `SKIP`.
 
+### Azure confidential VMs (azure-cvm)
+
+```bash
+# Demo: a confidential VM whose key release trusts any debuggable SEV-SNP guest
+untrust scan --platform azure-cvm --demo
+
+# Live, read-only scan (pip install 'untrust[azure]', or an `az login` session)
+untrust scan --platform azure-cvm \
+  --azure-subscription SUBSCRIPTION_ID --azure-resource-group RG --azure-vm cvm-01 \
+  --azure-key-vault kv-name --azure-key workload-key \
+  --azure-attestation-provider maa-name \
+  --azure-attestation-token maa.jwt \
+  --output report.json
+```
+
+Six checks: confidential size and security type (AZ-SKU-01), Secure Boot and vTPM (AZ-BOOT-01), confidential OS-disk encryption (AZ-DISK-01), a Secure Key Release policy that requires an MAA-attested, `azure-compliant-cvm` VM in every branch (AZ-SKR-01), an attestation provider whose policy cannot be rewritten through Azure RBAC (AZ-MAA-01), and MAA's own verdict from a token captured in the VM, with its signature checked against the issuer's keys (AZ-DBG-01). The scanner needs only Reader on the resource group, Key Vault Reader on the key, and Attestation Reader.
+
 ### Sample output
 
 Running `untrust scan --demo` against the built-in simulated deployment:

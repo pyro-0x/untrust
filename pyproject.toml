@@ -48,6 +48,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+azure = [
+    "azure-identity>=1.15",
+]
 sast = [
     "semgrep>=1.0",
 ]

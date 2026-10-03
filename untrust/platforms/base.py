@@ -9,6 +9,7 @@ class Platform(str, Enum):
     GCP_CSPACE = "gcp-cspace"
     GPU_CC = "gpu-cc"
     HOST = "host"
+    AZURE_CVM = "azure-cvm"
     TDX = "tdx"
 
     @classmethod
