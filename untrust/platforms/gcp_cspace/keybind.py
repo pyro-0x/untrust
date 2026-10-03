@@ -56,7 +56,9 @@ def analyze_wif_condition(condition: str | None) -> dict[str, Any]:
         # recommended bindings
         "binds_swname": ("swname" in t) and ("confidential_space" in t),
         # An equality binding, not a mention: hwmodel != '...' or a value inside
-        # an unrelated branch does not count.
+        # an unrelated branch does not count. This is a text match, not a CEL
+        # parse, so a wrapped negation (!(hwmodel == ...)) or an `|| true`
+        # still reads as bound; it only drives a recommended weakness.
         "binds_hwmodel": bool(_HWMODEL_EQ.search(t)),
         "constrains_support_attributes": ("support_attributes" in t) and ("stable" in t),
     }

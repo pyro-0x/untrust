@@ -12,7 +12,8 @@ the instance config and verifies the hardware/boot posture:
     attests: AMD SEV or Intel TDX. Google's attestation service rejects SEV-SNP
     (UNSUPPORTED_CC_TECHNOLOGY), so the launcher exits before the workload
     starts and no attestation token is ever issued. SEV-SNP stays fine for a
-    plain Confidential VM.
+    plain Confidential VM. Detection is static: a VM booted from a copied or
+    custom image with no tee-* metadata is treated as a plain VM.
   * shieldedInstanceConfig: Secure Boot, vTPM, and integrity monitoring on
 """
 
@@ -136,7 +137,7 @@ class ConfidentialVmConfigCheck(Check):
             status=Status.PASS,
             severity=self.severity,
             summary=(
-                f"Instance is an {verdict['tee']} Confidential VM with Shielded boot enabled"
+                f"Instance is a Confidential VM on {verdict['tee']} with Shielded boot enabled"
                 + (", running Confidential Space." if verdict["runs_confidential_space"] else ".")
             ),
             evidence=verdict,

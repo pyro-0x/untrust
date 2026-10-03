@@ -23,6 +23,11 @@ trust boundary leaks.
 | **CSPACE-WIF-02** | high | Every provider in the workload identity pool binds Confidential Space attestation — no weaker sibling provider offers a lateral key-release path | — |
 | **CSPACE-IMG-01** | high | Workload image signing is enforced (`tee-signed-image-repos` set), the image is digest-pinned, and the Artifact Registry repo is not broadly writable | ENCLAVE-03 |
 
+> CSPACE-VM-01 detects Confidential Space from the instance's `tee-*` metadata or
+> the confidential-space image license. A VM booted from a copied or custom image
+> with neither is treated as a plain Confidential VM, so a PASS on SEV_SNP is not
+> proof that Confidential Space is absent.
+
 Each check splits into a pure `analyze_*()` function (unit-tested, no I/O) and a
 thin live-fetch wrapper, mirroring how the Nitro checks separate logic from the
 AWS SDK call.
