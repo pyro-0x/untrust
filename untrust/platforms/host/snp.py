@@ -20,6 +20,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 REPORT_SIZE = 0x4A0
+SUPPORTED_VERSIONS = (2, 3)
+MIN_NONCE_BYTES = 16
 SIGNED_LEN = 0x2A0
 SIG_ALGO_ECDSA_P384_SHA384 = 1
 
@@ -85,6 +87,9 @@ def parse_report(raw: bytes) -> SnpReport:
         raise ValueError(f"SEV-SNP report is {len(raw)} bytes; expected {REPORT_SIZE}")
     raw = raw[:REPORT_SIZE]
     version, guest_svn, policy = struct.unpack_from("<IIQ", raw, 0x00)
+    if version not in SUPPORTED_VERSIONS:
+        raise ValueError(f"unsupported SEV-SNP report version {version}; this layout "
+                         f"is only defined for versions {SUPPORTED_VERSIONS}")
     vmpl, signature_algo = struct.unpack_from("<II", raw, 0x30)
     (key_info,) = struct.unpack_from("<I", raw, 0x48)
 
@@ -118,6 +123,10 @@ def verify_signature(report: SnpReport, signer: x509.Certificate) -> dict[str, A
     issues: list[str] = []
     if report.mask_chip_key or report.signing_key == SIGNING_KEY_NONE:
         issues.append("report is unsigned (MASK_CHIP_KEY set or SIGNING_KEY=none)")
+    elif report.signing_key not in (SIGNING_KEY_VCEK, SIGNING_KEY_VLEK):
+        issues.append(f"report names reserved SIGNING_KEY {report.signing_key}")
+    else:
+        issues.extend(_signer_kind_issues(report, signer))
     if report.signature_algo != SIG_ALGO_ECDSA_P384_SHA384:
         issues.append(f"unsupported signature algorithm {report.signature_algo}")
     key = signer.public_key()
@@ -136,6 +145,20 @@ def verify_signature(report: SnpReport, signer: x509.Certificate) -> dict[str, A
         "issues": issues,
         "passed": not issues,
     }
+
+
+def _signer_kind_issues(report: SnpReport, signer: x509.Certificate) -> list[str]:
+    """The cert must be the kind of key the report says signed it.
+
+    A VCEK carries a hardware-ID extension and a VLEK does not, so the report's
+    SIGNING_KEY field cannot steer which bindings are checked.
+    """
+    _, hwid = cert_tcb(signer)
+    if report.signing_key == SIGNING_KEY_VCEK and hwid is None:
+        return ["report says VCEK but the signing certificate has no hardware ID (not a VCEK)"]
+    if report.signing_key == SIGNING_KEY_VLEK and hwid is not None:
+        return ["report says VLEK but the signing certificate carries a hardware ID (a VCEK)"]
+    return []
 
 
 def _der_int(value: bytes) -> int | None:
@@ -178,15 +201,20 @@ def check_tcb(
         issues.append(f"guest SVN {report.guest_svn} is below the floor {min_svn}")
 
     cert_values, hwid = cert_tcb(signer)
-    if report.signing_key == SIGNING_KEY_VCEK:
+    if report.signing_key not in (SIGNING_KEY_VCEK, SIGNING_KEY_VLEK):
+        issues.append("report names no VCEK or VLEK signing key, so its TCB cannot be "
+                      "bound to a certificate")
+    else:
+        # Both VCEKs and VLEKs are issued for one specific TCB.
         mismatched = [n for n in TCB_FIELDS if cert_values[n] != report.reported_tcb[n]]
         if mismatched:
-            issues.append("VCEK was issued for a different TCB than the report claims ("
-                          + ", ".join(mismatched) + ")")
-        if hwid is not None and hwid != report.chip_id:
-            issues.append("VCEK hardware ID does not match the report's CHIP_ID")
+            issues.append("signing key was issued for a different TCB than the report "
+                          "claims (" + ", ".join(mismatched) + ")")
+    if report.signing_key == SIGNING_KEY_VCEK:
         if hwid is None:
             issues.append("VCEK carries no hardware ID extension")
+        elif hwid != report.chip_id:
+            issues.append("VCEK hardware ID does not match the report's CHIP_ID")
     return {
         "reported_tcb": report.reported_tcb,
         "committed_tcb": report.committed_tcb,
@@ -243,8 +271,13 @@ def check_nonce(report: SnpReport, nonce: bytes | None) -> dict[str, Any]:
     if nonce is None:
         return {"report_data": report.report_data.hex(), "issues": [],
                 "passed": None}
+    issues = []
+    if len(nonce) < MIN_NONCE_BYTES:
+        issues.append(f"nonce is {len(nonce)} bytes; at least {MIN_NONCE_BYTES} are "
+                      "needed so it cannot be guessed")
     expected = nonce.ljust(64, b"\0") if len(nonce) <= 64 else None
-    issues = [] if expected == report.report_data else [
-        "REPORT_DATA does not carry the expected nonce; the report may be replayed"]
+    if expected != report.report_data:
+        issues.append("REPORT_DATA does not carry the expected nonce; the report may be "
+                      "replayed")
     return {"report_data": report.report_data.hex(), "issues": issues,
             "passed": not issues}

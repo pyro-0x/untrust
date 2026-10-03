@@ -25,6 +25,7 @@ baseline pins what a good host looks like, one section per evidence type::
 from __future__ import annotations
 
 import json
+import struct
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -135,9 +136,9 @@ def verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None = N
     if evidence.type == "sev-snp":
         try:
             report = snp.parse_report(evidence.report)
-        except ValueError as e:
+        except (ValueError, IndexError, struct.error) as e:
             return _failed(evidence.type, f"could not parse SEV-SNP report: {e}")
-        results = {
+        evaluate = lambda: {  # noqa: E731
             "chain": chain,
             "signature": snp.verify_signature(report, signer),
             "nonce": snp.check_nonce(report, nonce),
@@ -150,9 +151,9 @@ def verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None = N
             quote = tpm.parse_quote(evidence.quote)
             sig = tpm.parse_signature(evidence.signature)
             log = tpm.replay_event_log(evidence.event_log) if evidence.event_log else None
-        except ValueError as e:
+        except (ValueError, IndexError, struct.error, UnicodeDecodeError) as e:
             return _failed(evidence.type, f"could not parse TPM evidence: {e}")
-        results = {
+        evaluate = lambda: {  # noqa: E731
             "chain": chain,
             "signature": tpm.verify_quote_signature(quote, sig, signer),
             "nonce": tpm.check_nonce(quote, nonce),
@@ -160,4 +161,9 @@ def verify(evidence: Evidence, baseline: dict[str, Any], nonce: bytes | None = N
             "tcb": tpm.check_tcb(quote, policy),
             "measurement": tpm.check_measurement(quote, sig, evidence.pcrs, log, policy),
         }
+    try:
+        results = evaluate()
+    except (ValueError, TypeError, AttributeError) as e:
+        # A malformed baseline (bad hex, non-numeric floor) must deny, not crash.
+        return _failed(evidence.type, f"invalid baseline or evidence values: {e}")
     return HostVerdict(evidence.type, {n: _control(n, results[n]) for n in CONTROLS})

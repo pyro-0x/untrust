@@ -34,6 +34,8 @@ _CRYPTO_HASH: dict[str, Callable[[], hashes.HashAlgorithm]] = {
     "sha512": hashes.SHA512,
 }
 
+MIN_NONCE_BYTES = 16
+
 EV_NO_ACTION = 0x00000003
 EV_EFI_VARIABLE_DRIVER_CONFIG = 0x80000001
 
@@ -163,6 +165,7 @@ class EventLog:
     pcrs: dict[str, dict[int, bytes]] = field(default_factory=dict)
     secure_boot: bool | None = None  # None = no SecureBoot variable measured
     secure_boot_unbound: bool = False  # SecureBoot event data didn't match its digest
+    secure_boot_conflict: bool = False  # SecureBoot measured twice with different values
     events: int = 0
 
 
@@ -190,17 +193,29 @@ def replay_event_log(raw: bytes) -> EventLog:
     while r.remaining:
         pcr, event_type = r.uint(4), r.uint(4)
         digests = {}
+        seen: set[int] = set()
         for _ in range(r.uint(4)):
             alg = r.uint(2)
             if alg not in algorithms:
                 raise ValueError(f"event digest uses undeclared algorithm 0x{alg:04x}")
+            if alg in seen:
+                raise ValueError(f"event carries two digests for algorithm 0x{alg:04x}")
+            seen.add(alg)
             digests[HASH_ALGS.get(alg, "")] = r.take(algorithms[alg])
         data = r.take(r.uint(4))
         log.events += 1
         if event_type == EV_NO_ACTION:
             if data.startswith(b"StartupLocality\0") and pcr == 0:
+                if len(data) < 17:
+                    raise ValueError("StartupLocality event is missing its locality byte")
                 locality = data[16]
             continue
+        # A measured event must carry a digest for every declared bank. One with
+        # missing digests extends nothing, so it could add unbound event data
+        # (e.g. a forged SecureBoot=1) while the log still replays to the quote.
+        if seen != set(algorithms):
+            raise ValueError(f"event {log.events} does not carry a digest for every "
+                             "declared algorithm")
         for bank, digest in digests.items():
             if bank not in banks:
                 continue
@@ -214,11 +229,17 @@ def replay_event_log(raw: bytes) -> EventLog:
             if name == "SecureBoot":
                 # Replay only binds the digests; the event data is what we read, so
                 # it must hash to those digests or a forged value could be slipped in.
-                if all(hashlib.new(b, data).digest() == d
-                       for b, d in digests.items() if b in banks):
-                    log.secure_boot = value[:1] == b"\x01"
-                else:
+                # Unbound and conflicting states are sticky: no later event clears them.
+                bound = bool(banks) and all(
+                    b in digests and hashlib.new(b, data).digest() == digests[b]
+                    for b in banks)
+                enabled = value[:1] == b"\x01"
+                if not bound:
                     log.secure_boot_unbound = True
+                elif log.secure_boot is not None and log.secure_boot != enabled:
+                    log.secure_boot_conflict = True
+                else:
+                    log.secure_boot = enabled
     return log
 
 
@@ -313,6 +334,9 @@ def check_secure_boot(quote: Quote, pcrs: dict[str, dict[int, bytes]], log: Even
                       "the log's Secure Boot state is unverified")
     elif log.secure_boot_unbound:
         issues.append("the SecureBoot event's data does not match its measured digest")
+    elif log.secure_boot_conflict:
+        issues.append("the event log measures SecureBoot more than once with "
+                      "conflicting values")
     elif baseline.get("require_secure_boot", True) and log.secure_boot is not True:
         issues.append("event log shows Secure Boot disabled" if log.secure_boot is False
                       else "event log does not measure the SecureBoot variable")
@@ -323,6 +347,11 @@ def check_secure_boot(quote: Quote, pcrs: dict[str, dict[int, bytes]], log: Even
 def check_nonce(quote: Quote, nonce: bytes | None) -> dict[str, Any]:
     if nonce is None:
         return {"extra_data": quote.extra_data.hex(), "issues": [], "passed": None}
-    issues = [] if quote.extra_data == nonce else [
-        "quote extraData does not carry the expected nonce; the quote may be replayed"]
+    issues = []
+    if len(nonce) < MIN_NONCE_BYTES:
+        issues.append(f"nonce is {len(nonce)} bytes; at least {MIN_NONCE_BYTES} are "
+                      "needed so it cannot be guessed")
+    if quote.extra_data != nonce:
+        issues.append("quote extraData does not carry the expected nonce; the quote "
+                      "may be replayed")
     return {"extra_data": quote.extra_data.hex(), "issues": issues, "passed": not issues}

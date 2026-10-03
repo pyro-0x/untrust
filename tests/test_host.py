@@ -320,3 +320,96 @@ def test_cli_scan_host(tmp_path: Path) -> None:
     assert runner.invoke(cli, ["scan", "--platform", "host"]).exit_code == 1
     assert runner.invoke(cli, ["scan", "--platform", "host", "--host-evidence",
                                str(evidence), "--host-nonce", "zz"]).exit_code == 1
+
+
+# --- Review fixes: fail closed on forged, malformed, or ambiguous evidence ----
+
+
+def _forged_secure_boot_without_digests() -> bytes:
+    data = synth._secure_boot_var(True)
+    return (struct.pack("<II", 7, tpm.EV_EFI_VARIABLE_DRIVER_CONFIG) + struct.pack("<I", 0)
+            + struct.pack("<I", len(data)) + data)
+
+
+def test_tpm_digestless_secure_boot_event_cannot_override() -> None:
+    # Appended after a real SecureBoot=0 event, it extends nothing, so the log
+    # would still replay to the quote if the parser accepted it.
+    fx = synth.tpm_fixture(log=synth.event_log(secure_boot=False))
+    fx.evidence.event_log = (fx.evidence.event_log or b"") + _forged_secure_boot_without_digests()
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert verdict.controls["debug"].passed is False
+    assert "every declared algorithm" in verdict.controls["debug"].issues[0]
+
+
+def test_tpm_conflicting_secure_boot_events_fail() -> None:
+    log = (synth._spec_id_event()
+           + synth._event(0, 0x00000008, b"firmware")
+           + synth._event(7, tpm.EV_EFI_VARIABLE_DRIVER_CONFIG, synth._secure_boot_var(False))
+           + synth._event(7, tpm.EV_EFI_VARIABLE_DRIVER_CONFIG, synth._secure_boot_var(True)))
+    fx = synth.tpm_fixture(log=log)
+    assert "conflicting values" in _issues(fx, "debug")[0]
+
+
+def test_tpm_truncated_startup_locality_fails_closed() -> None:
+    fx = synth.tpm_fixture()
+    short = (struct.pack("<II", 0, tpm.EV_NO_ACTION) + struct.pack("<IH", 1, 0x000B)
+             + bytes(32) + struct.pack("<I", 16) + b"StartupLocality\0")
+    fx.evidence.event_log = synth._spec_id_event() + short
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert not verdict.allowed
+    assert "locality byte" in verdict.controls["debug"].issues[0]
+
+
+def test_malformed_baseline_fails_closed() -> None:
+    fx = synth.tpm_fixture()
+    fx.baseline["tpm2"]["pcrs"] = {"sha256": {"7": "not-hex"}}
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert not verdict.allowed
+    assert "invalid baseline" in verdict.controls["measurement"].issues[0]
+
+    fx = synth.snp_fixture()
+    fx.baseline["sev-snp"]["min_tcb"] = {"snp": "high"}
+    assert not verify(fx.evidence, fx.baseline, fx.nonce).allowed
+
+
+def _set_signing_key(fx: synth.Fixture, key: int) -> None:
+    raw = bytearray(fx.evidence.report)
+    struct.pack_into("<I", raw, 0x48, key << 2)
+    fx.evidence.report = bytes(raw)
+
+
+def test_snp_reserved_signing_key_fails() -> None:
+    fx = synth.snp_fixture()
+    _set_signing_key(fx, 3)
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert "reserved SIGNING_KEY 3" in verdict.controls["signature"].issues[0]
+    assert verdict.controls["tcb"].passed is False
+
+
+def test_snp_vlek_claim_with_vcek_cert_fails() -> None:
+    fx = synth.snp_fixture()
+    _set_signing_key(fx, snp.SIGNING_KEY_VLEK)
+    assert any("says VLEK" in i for i in _issues(fx, "signature"))
+
+
+def test_snp_vcek_claim_with_cert_lacking_hwid_fails() -> None:
+    fx = synth.snp_fixture()
+    fx.evidence.certs[0] = fx.evidence.certs[1]  # ASK: no hwID extension
+    assert any("says VCEK" in i for i in _issues(fx, "signature"))
+
+
+def test_snp_unsupported_report_version_fails_closed() -> None:
+    fx = synth.snp_fixture()
+    raw = bytearray(fx.evidence.report)
+    struct.pack_into("<I", raw, 0, 9)
+    fx.evidence.report = bytes(raw)
+    verdict = verify(fx.evidence, fx.baseline, fx.nonce)
+    assert all(c.passed is False for c in verdict.controls.values())
+    assert "version 9" in verdict.controls["signature"].issues[0]
+
+
+def test_short_nonce_is_rejected() -> None:
+    fx = synth.snp_fixture(report_data=b"\x07")
+    assert any("at least 16" in i for i in _issues(fx, "nonce", nonce=b"\x07"))
+    tfx = synth.tpm_fixture(extra_data=b"\x07")
+    assert any("at least 16" in i for i in _issues(tfx, "nonce", nonce=b"\x07"))

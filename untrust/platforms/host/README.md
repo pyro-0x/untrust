@@ -22,8 +22,8 @@ reuse the same decisions the scanner reports.
 | Check | Control | SEV-SNP | TPM2 |
 |---|---|---|---|
 | HOST-CHAIN-01 | chain | VCEK/VLEK → ASK → ARK (RSA-PSS), root fingerprint pinned | AK → CA, issuers must be CA certs, root fingerprint pinned |
-| HOST-SIG-01 | signature | ECDSA P-384 over bytes `0x000–0x29F`; rejects `MASK_CHIP_KEY` / `SIGNING_KEY=none` | `TPMT_SIGNATURE` (ECDSA, RSASSA, RSAPSS) over `TPMS_ATTEST`; rejects SHA-1 |
-| HOST-NONCE-01 | nonce | `REPORT_DATA` equals the nonce, exact or zero-padded to 64 bytes | `extraData` equals the nonce |
+| HOST-SIG-01 | signature | ECDSA P-384 over bytes `0x000–0x29F`; report versions 2–3 only; rejects `MASK_CHIP_KEY`, a missing or reserved `SIGNING_KEY`, and a cert that is not the kind of key the report names | `TPMT_SIGNATURE` (ECDSA, RSASSA, RSAPSS) over `TPMS_ATTEST`; rejects SHA-1 |
+| HOST-NONCE-01 | nonce | `REPORT_DATA` equals the nonce (at least 16 bytes), exact or zero-padded to 64 bytes | `extraData` equals the nonce (at least 16 bytes) |
 | HOST-DEBUG-01 | debug | Policy DEBUG and MIGRATE_MA bits clear; optional `max_vmpl` | Event log measures `SecureBoot=1` in PCR 7, the event data hashes to its digest, and PCR 7 is quoted and replays |
 | HOST-TCB-01 | tcb | `REPORTED_TCB` ≥ `min_tcb` per component, equal to the VCEK's TCB extensions, VCEK hwID equals `CHIP_ID`; optional `min_guest_svn` | `firmwareVersion` ≥ `min_firmware_version` |
 | HOST-MEAS-01 | measurement | `MEASUREMENT` in the pinned list; optional `host_data` pin | Supplied PCRs hash to the quoted `pcrDigest`, pinned PCRs are quoted and match, event log replays to the quoted PCRs |
